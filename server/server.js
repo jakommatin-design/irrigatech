@@ -91,13 +91,14 @@ bridge.on('status', (status) => {
   });
 });
 
-// REST Endpoints
-app.get('/api/health', (req, res) => {
+// REST Endpoints & Railway Health Check
+app.get(['/', '/health', '/api/health'], (req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'Irriga-Tech Server V2.4', 
     database: 'TiDB Cloud (Serverless Distributed SQL)',
     tidb: tidb.getStatus(),
+    sqlite: true,
     timestamp: Date.now() 
   });
 });
@@ -177,17 +178,34 @@ app.post(['/api/command', '/api/v1/commands'], async (req, res) => {
   res.json({ success: true, cmd, state: bridge.state });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, async () => {
+// Process-level uncaught exception safety for containers
+process.on('uncaughtException', (err) => {
+  console.error('[Process Fatal] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process Fatal] Unhandled Rejection:', reason);
+});
+
+const PORT = parseInt(process.env.PORT || '3000', 10);
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`===============================================`);
   console.log(`🌱 Irriga-Tech IoT Backend Server Running`);
   console.log(`☁️ Cloud DB: TiDB Cloud (gateway01.ap-northeast-1.prod.aws.tidbcloud.com)`);
   console.log(`🗄️ Local DB: SQLite3 (server/irrigatech.db)`);
-  console.log(`📡 URL: http://localhost:${PORT}`);
-  console.log(`⚡ WebSocket: ws://localhost:${PORT}`);
+  console.log(`📡 URL: http://0.0.0.0:${PORT}`);
+  console.log(`⚡ WebSocket: ws://0.0.0.0:${PORT}`);
   console.log(`===============================================`);
   
-  // Initialize TiDB Cloud connection pool & tables
-  await initTiDB();
-  await bridge.init();
+  try {
+    // Initialize TiDB Cloud connection pool & tables
+    await initTiDB();
+  } catch (err) {
+    console.error('[Startup Warning] TiDB init error:', err.message);
+  }
+
+  try {
+    await bridge.init();
+  } catch (err) {
+    console.error('[Startup Warning] SerialBridge init error:', err.message);
+  }
 });
