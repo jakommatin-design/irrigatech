@@ -9,13 +9,13 @@ import {
 import AccountPortal from './AccountPortal';
 
 export default function SettingsView({ onNavigate }) {
-  const { user, logout } = useAuth();
+  const { user, logout, settings, updateSettings, farms } = useAuth();
   const { mode, connected, thresholds, setThreshold } = useSensors();
 
   const [activeSubModal, setActiveSubModal] = useState(null); // 'account' | 'greenhouse' | 'devices' | 'cloud' | 'security' | 'preferences' | 'help' | null
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [tempUnit, setTempUnit] = useState('celsius');
-  const [language, setLanguage] = useState('English');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications?.emailAlerts ?? true);
+  const [tempUnit, setTempUnit] = useState(settings?.general?.units?.includes('F') ? 'fahrenheit' : 'celsius');
+  const [language, setLanguage] = useState(settings?.general?.language || 'English');
 
   const settingsItems = [
     {
@@ -379,7 +379,20 @@ export default function SettingsView({ onNavigate }) {
               </div>
 
               <button
-                onClick={() => setActiveSubModal(null)}
+                onClick={async () => {
+                  await updateSettings({
+                    general: {
+                      ...(settings?.general || {}),
+                      language,
+                      units: tempUnit === 'celsius' ? 'Metric (°C, L, bar)' : 'Imperial (°F, gal, psi)'
+                    },
+                    notifications: {
+                      ...(settings?.notifications || {}),
+                      emailAlerts: notificationsEnabled
+                    }
+                  });
+                  setActiveSubModal(null);
+                }}
                 style={{
                   marginTop: '0.5rem',
                   padding: '0.75rem',
@@ -387,7 +400,8 @@ export default function SettingsView({ onNavigate }) {
                   background: '#15803d',
                   color: '#ffffff',
                   fontWeight: 700,
-                  fontSize: '0.9rem'
+                  fontSize: '0.9rem',
+                  cursor: 'pointer'
                 }}
               >
                 Save Preferences
@@ -434,24 +448,43 @@ export default function SettingsView({ onNavigate }) {
               {activeSubModal === 'devices' && (
                 <div>
                   <p><strong>Primary Controller:</strong> Arduino / ESP32 Node</p>
-                  <p><strong>Serial Interface:</strong> 9600 Baud /dev/ttyUSB0</p>
-                  <p><strong>Actuators Connected:</strong> Relay 1 (Water Pump), Relay 2 (Vent Fans), PWM Motor (Shade Mesh)</p>
-                  <p><strong>Sensors Connected:</strong> DHT11, FC-28 Soil Hygrometer, LDR Sensor, Voltage Divider</p>
+                  <p><strong>Interface:</strong> Live Hardware Serial Bridge & WebSockets</p>
+                  <p><strong>Actuators Connected:</strong> Water Pump Relay, Ventilation Fan, Motorized Shade</p>
+                  <p><strong>Telemetry Frequency:</strong> 2000 ms telemetry cadence</p>
+                  <p><strong>Mode:</strong> {mode === 'live' ? '🟢 Live Hardware Connected' : '🔵 Hardware Simulation Active'}</p>
                 </div>
               )}
               {activeSubModal === 'greenhouse' && (
                 <div>
-                  <p><strong>Facility Name:</strong> Greenhouse 1 (Primary)</p>
-                  <p><strong>Active Crop:</strong> Tomato (Vegetative Stage)</p>
-                  <p><strong>Location:</strong> Nanyuki Agrotech Research Facility</p>
-                  <p><strong>Square Footage:</strong> 120 m² automated coverage</p>
+                  <p><strong>Active Facility:</strong> {user?.activeFarm || 'Greenhouse 1 (Alpha)'}</p>
+                  <p><strong>Total Facilities:</strong> {farms?.length || 4} Managed Greenhouses</p>
+                  <p><strong>Active Crop:</strong> {user?.crops?.find(c => c.id === user?.selectedCrop)?.name || 'Tomato'}</p>
+                  <button
+                    onClick={() => { setActiveSubModal(null); onNavigate?.('account'); }}
+                    style={{
+                      marginTop: '0.75rem',
+                      width: '100%',
+                      padding: '0.65rem',
+                      borderRadius: '10px',
+                      background: '#0284c7',
+                      color: '#ffffff',
+                      border: 'none',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Manage Facilities & Crops in Portal →
+                  </button>
                 </div>
               )}
               {activeSubModal === 'cloud' && (
                 <div>
-                  <p><strong>Cloud Backend:</strong> Firebase Realtime Database & Node.js Bridge</p>
-                  <p><strong>Sync Interval:</strong> 2.0 seconds</p>
-                  <p><strong>Status:</strong> Cloud sync active & live telemetry stream connected</p>
+                  <p><strong>Cloud Distributed SQL:</strong> TiDB Cloud Serverless (MySQL-Compatible)</p>
+                  <p><strong>Cluster:</strong> gateway01.ap-northeast-1.prod.aws.tidbcloud.com</p>
+                  <p><strong>Local Edge Database:</strong> SQLite3 (WAL Mode, zero-loss fallback)</p>
+                  <p><strong>Production Host:</strong> Railway Production Container</p>
+                  <p><strong>Dual-Persistence:</strong> Active (Syncing all telemetry & irrigation events)</p>
                 </div>
               )}
               {activeSubModal === 'security' && (

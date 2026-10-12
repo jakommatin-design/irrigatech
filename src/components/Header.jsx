@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
 import { useSensors } from '../context/SensorContext';
-import { useAuth } from '../context/AuthContext';
 import { 
   Home, Activity, Droplets, Sprout, Sun, 
   Fan, Bell, BarChart2, Settings, Terminal,
-  Sparkles, ChevronDown
+  ChevronDown
 } from 'lucide-react';
 import logoImg from '../assets/site_logo.jpeg';
 
 export default function Header({ currentTab, setCurrentTab }) {
   const { mode } = useSensors();
-  const { setShowSplash } = useAuth();
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   // Core primary tabs (kept concise to prevent navbar flooding)
@@ -269,27 +267,6 @@ export default function Header({ currentTab, setCurrentTab }) {
             }} />
           </button>
 
-          {/* Opening splash shortcut */}
-          <button
-            onClick={() => setShowSplash(true)}
-            style={{
-              padding: '0.4rem 0.75rem',
-              borderRadius: '9px',
-              background: '#f0fdf4',
-              color: '#16a34a',
-              border: '1px solid #bbf7d0',
-              fontSize: '0.74rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            <Sparkles size={13} />
-            Opening Page
-          </button>
 
           {/* Online status badge */}
           <div style={{

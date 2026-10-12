@@ -125,6 +125,28 @@ export async function initTiDB() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(64) PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        email VARCHAR(128) NOT NULL,
+        role VARCHAR(64) DEFAULT 'Farm Manager',
+        phone VARCHAR(32),
+        avatar VARCHAR(255),
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS settings (
+        \`key\` VARCHAR(64) PRIMARY KEY,
+        \`value\` LONGTEXT NOT NULL,
+        category VARCHAR(64) DEFAULT 'general',
+        updated_at BIGINT NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
     // Seed default farm facilities if empty
     const [farms] = await pool.query('SELECT count(*) as cnt FROM farms');
     if (farms[0].cnt === 0) {
@@ -136,6 +158,40 @@ export async function initTiDB() {
         ('farm-herbs', 'Greenhouse 4 (Spices)', 'Basil & Mint', 'High-humidity Herb Zone', 30.0, 45.0, 0.90)
       `);
       console.log('[TiDB] Seeded initial farm profiles.');
+    }
+
+    const [users] = await pool.query('SELECT count(*) as cnt FROM users');
+    if (users[0].cnt === 0) {
+      const now = Date.now();
+      await pool.query(`
+        INSERT INTO users (id, name, email, role, phone, avatar, created_at, updated_at) VALUES
+        ('user-01', 'Farmer John', 'john@irrigatech.io', 'Chief Agronomist & Admin', '+254 712 345 678', '👨‍🌾', ?, ?),
+        ('user-02', 'Sarah Muthoni', 'sarah@irrigatech.io', 'Irrigation Engineer', '+254 722 987 654', '👩‍🔬', ?, ?),
+        ('user-03', 'David Kibet', 'david@irrigatech.io', 'Greenhouse Technician', '+254 733 112 233', '👷', ?, ?)
+      `, [now, now, now, now, now, now]);
+      console.log('[TiDB] Seeded team user accounts.');
+    }
+
+    const [settings] = await pool.query('SELECT count(*) as cnt FROM settings');
+    if (settings[0].cnt === 0) {
+      const now = Date.now();
+      await pool.query(`
+        INSERT INTO settings (\`key\`, \`value\`, category, updated_at) VALUES
+        ('general', ?, 'general', ?),
+        ('automation', ?, 'automation', ?),
+        ('climate', ?, 'climate', ?),
+        ('notifications', ?, 'notifications', ?)
+      `, [
+        JSON.stringify({ farmName: 'Irriga-Tech Smart Facility', location: 'Nanyuki Agrotech Cluster', timezone: 'Africa/Nairobi (UTC+3)', units: 'Metric (°C, L, bar)', language: 'English' }),
+        now,
+        JSON.stringify({ autoIrrigation: true, maxPumpRunMinutes: 5, minCooldownMinutes: 1, lowWaterCutoffPct: 15 }),
+        now,
+        JSON.stringify({ fanOnTemp: 30, fanOffTemp: 24, shadeCloseLux: 950, shadeOpenLux: 400, targetHumidityPct: 65 }),
+        now,
+        JSON.stringify({ emailAlerts: true, smsAlerts: true, criticalOnly: false, phoneRecipient: '+254 712 345 678' }),
+        now
+      ]);
+      console.log('[TiDB] Seeded initial system settings.');
     }
 
     isConnected = true;
@@ -265,15 +321,241 @@ export const tidb = {
     }
   },
 
+  // ─── Farms CRUD ─────────────────────────────────────────────────────────
   async getFarms() {
-    if (!pool || !isConnected) return [];
+    if (!pool || !isConnected) return null;
     try {
       const [rows] = await pool.query('SELECT * FROM farms');
       return rows;
     } catch (err) {
       console.error('[TiDB] Error reading farms:', err.message);
-      return [];
+      return null;
     }
+  },
+
+  async getFarmById(id) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM farms WHERE id = ?', [id]);
+      return rows[0] || null;
+    } catch (err) {
+      console.error('[TiDB] Error getting farm:', err.message);
+      return null;
+    }
+  },
+
+  async createFarm(farm) {
+    if (!pool || !isConnected) return null;
+    const id = farm.id || `farm-${Date.now()}`;
+    try {
+      await pool.query(`
+        INSERT INTO farms (id, name, crop, location, moisture_min, moisture_max, target_vpd)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        id,
+        farm.name || 'New Greenhouse',
+        farm.crop || 'Tomato',
+        farm.location || 'Local Cluster',
+        farm.moisture_min || 35.0,
+        farm.moisture_max || 50.0,
+        farm.target_vpd || 0.85
+      ]);
+      return this.getFarmById(id);
+    } catch (err) {
+      console.error('[TiDB] Error creating farm:', err.message);
+      return null;
+    }
+  },
+
+  async updateFarm(id, farm) {
+    if (!pool || !isConnected) return null;
+    try {
+      await pool.query(`
+        UPDATE farms SET
+          name = COALESCE(?, name),
+          crop = COALESCE(?, crop),
+          location = COALESCE(?, location),
+          moisture_min = COALESCE(?, moisture_min),
+          moisture_max = COALESCE(?, moisture_max),
+          target_vpd = COALESCE(?, target_vpd)
+        WHERE id = ?
+      `, [
+        farm.name,
+        farm.crop,
+        farm.location,
+        farm.moisture_min,
+        farm.moisture_max,
+        farm.target_vpd,
+        id
+      ]);
+      return this.getFarmById(id);
+    } catch (err) {
+      console.error('[TiDB] Error updating farm:', err.message);
+      return null;
+    }
+  },
+
+  async deleteFarm(id) {
+    if (!pool || !isConnected) return false;
+    try {
+      const [result] = await pool.query('DELETE FROM farms WHERE id = ?', [id]);
+      return result.affectedRows > 0;
+    } catch (err) {
+      console.error('[TiDB] Error deleting farm:', err.message);
+      return false;
+    }
+  },
+
+  // ─── Users / Accounts CRUD ───────────────────────────────────────────────
+  async getUsers() {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM users ORDER BY created_at ASC');
+      return rows;
+    } catch (err) {
+      console.error('[TiDB] Error reading users:', err.message);
+      return null;
+    }
+  },
+
+  async getUserById(id) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+      return rows[0] || null;
+    } catch (err) {
+      console.error('[TiDB] Error reading user:', err.message);
+      return null;
+    }
+  },
+
+  async createUser(user) {
+    if (!pool || !isConnected) return null;
+    const id = user.id || `user-${Date.now()}`;
+    const now = Date.now();
+    try {
+      await pool.query(`
+        INSERT INTO users (id, name, email, role, phone, avatar, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        id,
+        user.name || 'Team Member',
+        user.email || `${id}@irrigatech.io`,
+        user.role || 'Farm Operator',
+        user.phone || '+254 700 000 000',
+        user.avatar || '👨‍🌾',
+        now,
+        now
+      ]);
+      return this.getUserById(id);
+    } catch (err) {
+      console.error('[TiDB] Error creating user:', err.message);
+      return null;
+    }
+  },
+
+  async updateUser(id, user) {
+    if (!pool || !isConnected) return null;
+    const now = Date.now();
+    try {
+      await pool.query(`
+        UPDATE users SET
+          name = COALESCE(?, name),
+          email = COALESCE(?, email),
+          role = COALESCE(?, role),
+          phone = COALESCE(?, phone),
+          avatar = COALESCE(?, avatar),
+          updated_at = ?
+        WHERE id = ?
+      `, [
+        user.name,
+        user.email,
+        user.role,
+        user.phone,
+        user.avatar,
+        now,
+        id
+      ]);
+      return this.getUserById(id);
+    } catch (err) {
+      console.error('[TiDB] Error updating user:', err.message);
+      return null;
+    }
+  },
+
+  async deleteUser(id) {
+    if (!pool || !isConnected) return false;
+    try {
+      const [result] = await pool.query('DELETE FROM users WHERE id = ?', [id]);
+      return result.affectedRows > 0;
+    } catch (err) {
+      console.error('[TiDB] Error deleting user:', err.message);
+      return false;
+    }
+  },
+
+  // ─── Settings CRUD ───────────────────────────────────────────────────────
+  async getSettings() {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM settings');
+      const result = {};
+      for (const r of rows) {
+        try {
+          result[r.key] = JSON.parse(r.value);
+        } catch {
+          result[r.key] = r.value;
+        }
+      }
+      return result;
+    } catch (err) {
+      console.error('[TiDB] Error reading settings:', err.message);
+      return null;
+    }
+  },
+
+  async getSetting(key) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM settings WHERE `key` = ?', [key]);
+      if (rows.length === 0) return null;
+      try {
+        return JSON.parse(rows[0].value);
+      } catch {
+        return rows[0].value;
+      }
+    } catch (err) {
+      console.error('[TiDB] Error reading setting:', err.message);
+      return null;
+    }
+  },
+
+  async updateSetting(key, value, category = 'general') {
+    if (!pool || !isConnected) return null;
+    const now = Date.now();
+    const strVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    try {
+      await pool.query(`
+        INSERT INTO settings (\`key\`, \`value\`, category, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          \`value\` = VALUES(\`value\`),
+          category = VALUES(category),
+          updated_at = VALUES(updated_at)
+      `, [key, strVal, category, now]);
+      return this.getSetting(key);
+    } catch (err) {
+      console.error('[TiDB] Error updating setting:', err.message);
+      return null;
+    }
+  },
+
+  async updateSettingsBatch(settingsObj) {
+    if (!pool || !isConnected) return null;
+    for (const [key, val] of Object.entries(settingsObj)) {
+      await this.updateSetting(key, val);
+    }
+    return this.getSettings();
   },
 
   async getWeeklyStats() {

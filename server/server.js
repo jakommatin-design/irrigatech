@@ -168,6 +168,7 @@ app.get('/api/alerts', async (req, res) => {
   res.json({ alerts });
 });
 
+// ─── 1. Farms CRUD Endpoints ─────────────────────────────────────────────
 // GET /api/farms
 app.get('/api/farms', async (req, res) => {
   let farms = await tidb.getFarms();
@@ -175,6 +176,118 @@ app.get('/api/farms', async (req, res) => {
     farms = db.getFarms();
   }
   res.json({ farms });
+});
+
+// GET /api/farms/:id
+app.get('/api/farms/:id', async (req, res) => {
+  let farm = await tidb.getFarmById(req.params.id);
+  if (!farm) farm = db.getFarmById(req.params.id);
+  if (!farm) return res.status(404).json({ error: 'Farm not found' });
+  res.json({ farm });
+});
+
+// POST /api/farms
+app.post('/api/farms', async (req, res) => {
+  const farmData = req.body;
+  if (!farmData.name) return res.status(400).json({ error: 'Farm name is required' });
+  let created = await tidb.createFarm(farmData);
+  const localCreated = db.createFarm(farmData);
+  if (!created) created = localCreated;
+  io.emit('farms_updated', { action: 'create', farm: created });
+  res.status(201).json({ farm: created });
+});
+
+// PUT /api/farms/:id
+app.put('/api/farms/:id', async (req, res) => {
+  const { id } = req.params;
+  const farmData = req.body;
+  let updated = await tidb.updateFarm(id, farmData);
+  const localUpdated = db.updateFarm(id, farmData);
+  if (!updated) updated = localUpdated;
+  io.emit('farms_updated', { action: 'update', farm: updated });
+  res.json({ farm: updated });
+});
+
+// DELETE /api/farms/:id
+app.delete('/api/farms/:id', async (req, res) => {
+  const { id } = req.params;
+  await tidb.deleteFarm(id);
+  db.deleteFarm(id);
+  io.emit('farms_updated', { action: 'delete', id });
+  res.json({ success: true, id });
+});
+
+// ─── 2. Accounts & Users CRUD Endpoints ──────────────────────────────────
+// GET /api/users
+app.get(['/api/users', '/api/accounts'], async (req, res) => {
+  let users = await tidb.getUsers();
+  if (!users || users.length === 0) {
+    users = db.getUsers();
+  }
+  res.json({ users });
+});
+
+// GET /api/users/:id
+app.get(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+  let user = await tidb.getUserById(req.params.id);
+  if (!user) user = db.getUserById(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ user });
+});
+
+// POST /api/users
+app.post(['/api/users', '/api/accounts'], async (req, res) => {
+  const userData = req.body;
+  if (!userData.name || !userData.email) {
+    return res.status(400).json({ error: 'Name and email are required' });
+  }
+  let created = await tidb.createUser(userData);
+  const localCreated = db.createUser(userData);
+  if (!created) created = localCreated;
+  io.emit('users_updated', { action: 'create', user: created });
+  res.status(201).json({ user: created });
+});
+
+// PUT /api/users/:id
+app.put(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+  const { id } = req.params;
+  const userData = req.body;
+  let updated = await tidb.updateUser(id, userData);
+  const localUpdated = db.updateUser(id, userData);
+  if (!updated) updated = localUpdated;
+  io.emit('users_updated', { action: 'update', user: updated });
+  res.json({ user: updated });
+});
+
+// DELETE /api/users/:id
+app.delete(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+  const { id } = req.params;
+  await tidb.deleteUser(id);
+  db.deleteUser(id);
+  io.emit('users_updated', { action: 'delete', id });
+  res.json({ success: true, id });
+});
+
+// ─── 3. Settings CRUD Endpoints ──────────────────────────────────────────
+// GET /api/settings
+app.get('/api/settings', async (req, res) => {
+  let settings = await tidb.getSettings();
+  if (!settings || Object.keys(settings).length === 0) {
+    settings = db.getSettings();
+  }
+  res.json({ settings });
+});
+
+// PUT /api/settings
+app.put('/api/settings', async (req, res) => {
+  const settingsData = req.body;
+  if (!settingsData || typeof settingsData !== 'object') {
+    return res.status(400).json({ error: 'Invalid settings payload' });
+  }
+  await tidb.updateSettingsBatch(settingsData);
+  const localSettings = db.updateSettingsBatch(settingsData);
+  io.emit('settings_updated', localSettings);
+  res.json({ success: true, settings: localSettings });
 });
 
 // GET /api/stats/weekly
