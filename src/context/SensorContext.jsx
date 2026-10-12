@@ -228,7 +228,10 @@ export function SensorProvider({ children }) {
   }
 
   useEffect(() => {
-    const SERVER = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    const SERVER = import.meta.env.VITE_SERVER_URL || 
+      (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+        ? window.location.origin 
+        : 'http://localhost:3000');
 
     async function tryConnect() {
       try {

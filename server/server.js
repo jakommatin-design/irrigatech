@@ -2,9 +2,23 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { SerialBridge } from './serial-bridge.js';
 import { db } from './db.js';
 import { initTiDB, tidb } from './tidb.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Detect built React frontend distribution
+const distCandidates = [
+  path.resolve(__dirname, '../dist'),
+  path.resolve(__dirname, './dist'),
+  path.resolve('/app/dist')
+];
+const distDir = distCandidates.find(d => fs.existsSync(d) && fs.existsSync(path.join(d, 'index.html')));
 
 const app = express();
 const server = http.createServer(app);
@@ -17,6 +31,11 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json());
+
+if (distDir) {
+  console.log(`[Frontend] Serving React Dashboard from: ${distDir}`);
+  app.use(express.static(distDir));
+}
 
 const bridge = new SerialBridge();
 
@@ -92,13 +111,14 @@ bridge.on('status', (status) => {
 });
 
 // REST Endpoints & Railway Health Check
-app.get(['/', '/health', '/api/health'], (req, res) => {
+app.get(['/health', '/api/health'], (req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'Irriga-Tech Server V2.4', 
     database: 'TiDB Cloud (Serverless Distributed SQL)',
     tidb: tidb.getStatus(),
     sqlite: true,
+    frontend: distDir ? 'unified-react-dashboard' : 'api-only',
     timestamp: Date.now() 
   });
 });
@@ -177,6 +197,27 @@ app.post(['/api/command', '/api/v1/commands'], async (req, res) => {
   
   res.json({ success: true, cmd, state: bridge.state });
 });
+
+// SPA Fallback for client-side routing & unified frontend
+if (distDir) {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health') {
+      return next();
+    }
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.json({ 
+      status: 'ok', 
+      service: 'Irriga-Tech Server V2.4 (API Only)', 
+      database: 'TiDB Cloud (Serverless Distributed SQL)',
+      tidb: tidb.getStatus(),
+      sqlite: true,
+      timestamp: Date.now() 
+    });
+  });
+}
 
 // Process-level uncaught exception safety for containers
 process.on('uncaughtException', (err) => {
