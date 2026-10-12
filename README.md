@@ -74,5 +74,30 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ---
 
+## ☁️ Cloud Deployment
+
+### Backend (Railway)
+1. Go to [railway.app](https://railway.app) and click **New Project** → **Deploy from GitHub repo**.
+2. Select `jakommatin-design/irrigatech`.
+3. In **Variables**, add your TiDB Cloud credentials:
+   - `TIDB_HOST` = `gateway01.ap-northeast-1.prod.aws.tidbcloud.com`
+   - `TIDB_PORT` = `4000`
+   - `TIDB_USER` = `V5nFR5aVnYe1aC9.root`
+   - `TIDB_PASSWORD` = `5CSKLufPf7lwzngF`
+   - `TIDB_DATABASE` = `irrigatech`
+   - `TIDB_SSL` = `true`
+   - `PORT` = `3000`
+4. In **Settings** → **Networking**, click **Generate Domain** (e.g. `irrigatech-production.up.railway.app`).
+
+### Frontend (Vercel)
+1. Go to [vercel.com](https://vercel.com) and click **Add New** → **Project**.
+2. Import `jakommatin-design/irrigatech`.
+3. In **Environment Variables**, add:
+   - `VITE_SERVER_URL` = `https://your-railway-app.up.railway.app`
+4. Click **Deploy**.
+
+---
+
 ## 📄 License
 MIT License. Developed for smart greenhouse automation and precision agriculture.
+
