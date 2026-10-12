@@ -10,8 +10,8 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const DB_CONFIG = {
   host: process.env.TIDB_HOST || 'gateway01.ap-northeast-1.prod.aws.tidbcloud.com',
   port: parseInt(process.env.TIDB_PORT || '4000', 10),
-  user: process.env.TIDB_USER || 'V5nFR5aVnYe1aC9.root',
-  password: process.env.TIDB_PASSWORD || '5CSKLufPf7lwzngF',
+  user: process.env.TIDB_USER,
+  password: process.env.TIDB_PASSWORD,
   database: process.env.TIDB_DATABASE || 'irrigatech',
   waitForConnections: true,
   connectionLimit: 10,
@@ -29,6 +29,17 @@ let isConnected = false;
 
 // ─── 1. Initialize Pool & Schema ───────────────────────────────────────────
 export async function initTiDB() {
+  if (!DB_CONFIG.password) {
+    isConnected = false;
+    console.error('[TiDB] TIDB_PASSWORD not set. Skipping TiDB init (SQLite fallback remains active).');
+    return;
+  }
+  if (!DB_CONFIG.user) {
+    isConnected = false;
+    console.error('[TiDB] TIDB_USER not set. Skipping TiDB init (SQLite fallback remains active).');
+    return;
+  }
+
   try {
     console.log(`[TiDB] Connecting to TiDB Cloud cluster at ${DB_CONFIG.host}:${DB_CONFIG.port}...`);
     
