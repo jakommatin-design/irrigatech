@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Production build output
+dist/
+dist-ssr/
+*.local
+
+# Environment & credentials
+.env
+*.env
+server/.env
+
+# Local SQLite databases & journals
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+server/irrigatech.db
+server/telemetry_history.json
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

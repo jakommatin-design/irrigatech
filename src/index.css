@@ -1,0 +1,133 @@
+:root {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  --primary: #15803d;
+  --primary-light: #22c55e;
+  --primary-bg: #ecfdf5;
+  --primary-border: #bbf7d0;
+  
+  --secondary: #0284c7;
+  --secondary-light: #38bdf8;
+  --secondary-bg: #f0f9ff;
+  --secondary-border: #bae6fd;
+
+  --amber: #d97706;
+  --amber-bg: #fffbeb;
+  --amber-border: #fde68a;
+
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  
+  --bg-page: #f8fafc;
+  --card-bg: #ffffff;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-light: #94a3b8;
+  
+  --border-subtle: #e2e8f0;
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-card: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.03);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-page);
+  color: var(--text-main);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+/* Keyframe animations */
+@keyframes pulseSlow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+@keyframes flowLine {
+  0% { stroke-dashoffset: 20; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.animate-pulse-slow {
+  animation: pulseSlow 3s infinite ease-in-out;
+}
+
+.flow-active {
+  stroke-dasharray: 4, 4;
+  animation: flowLine 1s linear infinite;
+}
+
+/* Clean, Organized Vertical Dashboard Flow */
+.dashboard-container {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 5.5rem;
+}
+
+.dashboard-vertical-layout {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 1.75rem !important;
+  width: 100% !important;
+}
+
+/* On Desktop (>= 1024px) */
+@media (min-width: 1024px) {
+  .mobile-only-header {
+    display: none !important;
+  }
+  
+  .bottom-nav-mobile {
+    display: none !important;
+  }
+}
+
+/* On Mobile & Tablet (< 1024px) */
+@media (max-width: 1023px) {
+  .desktop-nav-links {
+    display: none !important;
+  }
+  
+  .dashboard-container {
+    max-width: 520px;
+    padding: 1rem 0.85rem 5.5rem;
+  }
+}
