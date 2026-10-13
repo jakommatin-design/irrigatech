@@ -70,28 +70,48 @@ export class SerialBridge extends EventEmitter {
   }
 
   parseArduinoSerial(line) {
-    // Arduino outputs format: e.g., "T:28.0,H:65.0,S:420,P:0"
+    // Firmware V2.4 emits JSON: {"temperature":28.0,"humidity":65.1,"soilMoisture":42.0,"soilPh":6.20,"pump":false,...}
+    // Legacy firmware used CSV: "T:28.0,H:65.0,S:420,P:0"
     try {
       this.emit('rawSerial', line);
-      const parts = line.split(',');
       const prevPump = this.state.pump;
-      parts.forEach(part => {
-        const [key, val] = part.split(':');
-        if (key === 'T') this.state.temperature = parseFloat(val);
-        if (key === 'H') this.state.humidity = parseFloat(val);
-        if (key === 'S') {
-          // Analog 0-1023 mapped to percentage
-          const raw = parseInt(val, 10);
-          this.state.soilMoisture = parseFloat(((raw / 1023) * 100).toFixed(1));
+
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{')) {
+        // — JSON mode (V2.4 firmware) —
+        const parsed = JSON.parse(trimmed);
+        if (parsed.error) {
+          console.warn('[SerialBridge] Firmware error:', parsed.error);
+          return;
         }
-        if (key === 'PH') this.state.soilPh = parseFloat(val);
-        if (key === 'P') this.state.pump = val.trim() === '1';
-      });
+        if (typeof parsed.temperature === 'number')  this.state.temperature  = parseFloat(parsed.temperature.toFixed(1));
+        if (typeof parsed.humidity    === 'number')  this.state.humidity     = parseFloat(parsed.humidity.toFixed(1));
+        if (typeof parsed.soilMoisture === 'number') this.state.soilMoisture = parseFloat(parsed.soilMoisture.toFixed(1));
+        if (typeof parsed.soilPh      === 'number')  this.state.soilPh      = parseFloat(parsed.soilPh.toFixed(2));
+        if (typeof parsed.pump        === 'boolean') this.state.pump        = parsed.pump;
+        if (typeof parsed.ac          === 'boolean') this.state.ac          = parsed.ac;
+        if (typeof parsed.led         === 'boolean') this.state.led         = parsed.led;
+      } else {
+        // — Legacy CSV mode (older firmware) —
+        const parts = trimmed.split(',');
+        parts.forEach(part => {
+          const [key, val] = part.split(':');
+          if (!key || val === undefined) return;
+          if (key === 'T')  this.state.temperature  = parseFloat(val);
+          if (key === 'H')  this.state.humidity     = parseFloat(val);
+          if (key === 'S') {
+            const raw = parseInt(val, 10);
+            this.state.soilMoisture = parseFloat(((raw / 1023) * 100).toFixed(1));
+          }
+          if (key === 'PH') this.state.soilPh = parseFloat(val);
+          if (key === 'P')  this.state.pump = val.trim() === '1';
+        });
+      }
 
       this.checkPumpStateTransition(prevPump, this.state.pump);
       this.emit('telemetry', { ...this.state });
     } catch (err) {
-      console.warn('Failed parsing serial line:', line);
+      console.warn('[SerialBridge] Failed parsing serial line:', line, err.message);
     }
   }
 

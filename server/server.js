@@ -13,6 +13,7 @@ import { db } from './db.js';
 import { initTiDB, tidb } from './tidb.js';
 import { aiAgronomy } from './ai-service.js';
 import { UssdService } from './ussd-service.js';
+import { weatherService } from './weather-service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'irrigatech-jwt-secret-key-2026';
 
@@ -133,7 +134,7 @@ bridge.on('irrigation_cycle_finished', async (data) => {
     // 1. Fetch farmer settings & phone recipient
     let settings = await tidb.getSettings();
     if (!settings || !settings.notifications) settings = db.getSettings();
-    const phoneRecipient = settings?.notifications?.phoneRecipient || '+254712345678';
+    const phoneRecipient = settings?.notifications?.phoneRecipient || process.env.FARMER_PHONE || '+254712345678';
     const crop = deviceConfig.crop || 'Tomato (Solanum lycopersicum)';
 
     // 2. Synthesize AI Agronomy advice (Soil pH, fertilizer recommendation & optimal timing)
@@ -643,6 +644,19 @@ app.post('/api/ai/advice', async (req, res) => {
     res.json({ success: true, aiMode: advice.aiMode || 'rules', advice });
   } catch (err) {
     res.status(500).json({ error: 'Failed to generate AI agronomy advice', details: err.message });
+  }
+});
+
+// ─── 6. Weather & Solar Forecast Endpoint ──────────────────────────────────
+// GET /api/weather - Live Open-Meteo forecast with energy-aware irrigation advisory
+app.get('/api/weather', async (req, res) => {
+  try {
+    const lat = parseFloat(req.query.lat) || undefined;
+    const lon = parseFloat(req.query.lon) || undefined;
+    const forecast = await weatherService.getForecast(lat, lon);
+    res.json({ success: true, forecast });
+  } catch (err) {
+    res.status(500).json({ error: 'Weather forecast unavailable', details: err.message });
   }
 });
 
