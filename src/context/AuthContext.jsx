@@ -287,7 +287,9 @@ export function AuthProvider({ children }) {
       }
       setIsAuthenticated(true);
       localStorage.setItem('irrigatech_auth', 'true');
+      sessionStorage.setItem('irrigatech_visited', '1');
       setShowAuthModal(false);
+      setShowSplash(false);
       refreshData();
       return { success: true, user: data.user };
     } catch (err) {
@@ -295,7 +297,9 @@ export function AuthProvider({ children }) {
       // Fallback if backend server unreachable in development
       setIsAuthenticated(true);
       localStorage.setItem('irrigatech_auth', 'true');
+      sessionStorage.setItem('irrigatech_visited', '1');
       setShowAuthModal(false);
+      setShowSplash(false);
       return { success: true };
     }
   };
@@ -330,7 +334,9 @@ export function AuthProvider({ children }) {
       }
       setIsAuthenticated(true);
       localStorage.setItem('irrigatech_auth', 'true');
+      sessionStorage.setItem('irrigatech_visited', '1');
       setShowAuthModal(false);
+      setShowSplash(false);
       refreshData();
       return { success: true, user: data.user };
     } catch (err) {
