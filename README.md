@@ -90,7 +90,12 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
    - `PORT` = `3000`
 4. In **Settings** → **Networking**, click **Generate Domain** (e.g. `irrigatech-production.up.railway.app`).
    Railway provisions HTTPS for its generated domain automatically. Open the generated `https://` URL to use the combined frontend and API deployment. Do not use the raw service address or an `http://` URL for browser notifications.
-5. Add these server-only variables in Railway **Variables** to enable real Africa's Talking SMS:
+5. Add these server-only variables in Railway **Variables** for signed Cloudinary profile-photo uploads:
+   - `CLOUDINARY_CLOUD_NAME`
+   - `CLOUDINARY_API_KEY`
+   - `CLOUDINARY_API_SECRET`
+   Keep `CLOUDINARY_API_SECRET` out of frontend variables. Local values go in `server/.env.local`.
+6. Add these server-only variables in Railway **Variables** to enable real Africa's Talking SMS:
    - `AT_USERNAME` = your Africa's Talking app username (`Irriga-Tech` for the credentials provided for local setup)
    - `AT_API_KEY` = the API key from the Africa's Talking dashboard (keep it in Railway Variables; never use a `VITE_` variable)
    - `AT_SENDER_ID` = only the sender ID approved for your Africa's Talking account; omit this until it is approved

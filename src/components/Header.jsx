@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
+import { getUserInitials, isProfilePhoto } from '../utils/avatar';
 import { 
   Home, Activity, Droplets, Sprout, Sun, 
   Fan, Bell, BarChart2, Settings, Terminal, Phone,
@@ -9,6 +11,7 @@ import logoImg from '../assets/site_logo.jpeg';
 
 export default function Header({ currentTab, setCurrentTab }) {
   const { mode } = useSensors();
+  const { user } = useAuth();
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   // Core primary tabs (kept concise to prevent navbar flooding)
@@ -314,7 +317,7 @@ export default function Header({ currentTab, setCurrentTab }) {
               flexShrink: 0
             }}
           >
-            FJ
+            {isProfilePhoto(user?.avatar) ? <img src={user.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : getUserInitials(user)}
           </button>
         </div>
       </div>

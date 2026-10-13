@@ -1,5 +1,7 @@
 import React from 'react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
+import { getUserInitials, isProfilePhoto } from '../utils/avatar';
 import { 
   Droplets, Thermometer, CloudRain, Sun, 
   BatteryCharging, Zap, ShieldCheck, CheckCircle2, 
@@ -7,6 +9,7 @@ import {
 } from 'lucide-react';
 
 export default function DashboardView({ onNavigate }) {
+  const { user } = useAuth();
   const { 
     temperature, humidity, soilMoisture, lightLux,
     pump, ac, shadePct, waterTank, batterySoc, batteryVoltage, solarWatts,
@@ -112,11 +115,11 @@ export default function DashboardView({ onNavigate }) {
               fontSize: '0.75rem',
               fontWeight: 800
             }}>
-              FJ
+              {isProfilePhoto(user?.avatar) ? <img src={user.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : getUserInitials(user)}
             </div>
             <div style={{ textAlign: 'left', lineHeight: 1.1 }}>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0f172a' }}>Farmer John</div>
-              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Tomato Farm</div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0f172a' }}>{user?.name || 'Farmer'}</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{user?.activeFarm || 'My Greenhouse'}</div>
             </div>
           </div>
         </div>

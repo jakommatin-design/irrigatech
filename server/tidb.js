@@ -157,12 +157,38 @@ export async function initTiDB() {
       CREATE TABLE IF NOT EXISTS farms (
         id VARCHAR(64) PRIMARY KEY,
         owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01',
+        connection_code VARCHAR(32) UNIQUE,
         name VARCHAR(128) NOT NULL,
         crop VARCHAR(128) NOT NULL,
         location VARCHAR(128),
         moisture_min FLOAT DEFAULT 35.0,
         moisture_max FLOAT DEFAULT 50.0,
         target_vpd FLOAT DEFAULT 0.85
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS farm_user_access (
+        farm_id VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        granted_by VARCHAR(64),
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (farm_id, user_id),
+        INDEX idx_farm_access_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS farm_connection_requests (
+        id VARCHAR(96) PRIMARY KEY,
+        farm_id VARCHAR(64) NOT NULL,
+        requester_id VARCHAR(64) NOT NULL,
+        requester_owner_id VARCHAR(64) NOT NULL,
+        target_owner_id VARCHAR(64) NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        UNIQUE KEY uniq_farm_connection (farm_id, requester_id),
+        INDEX idx_farm_requests_target (target_owner_id, status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
@@ -188,6 +214,7 @@ export async function initTiDB() {
       // Column already exists or table freshly created
     }
     try { await pool.query(`ALTER TABLE farms ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01'`); } catch (e) {}
+    try { await pool.query(`ALTER TABLE farms ADD COLUMN connection_code VARCHAR(32) NULL UNIQUE`); } catch (e) {}
     try { await pool.query(`ALTER TABLE users ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01'`); } catch (e) {}
 
     await pool.query(`
@@ -199,15 +226,21 @@ export async function initTiDB() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    const [farmsWithoutCodes] = await pool.query("SELECT id FROM farms WHERE connection_code IS NULL OR connection_code = ''");
+    for (const farm of farmsWithoutCodes) {
+      const code = `GH-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+      try { await pool.query("UPDATE farms SET connection_code = ? WHERE id = ? AND (connection_code IS NULL OR connection_code = '')", [code, farm.id]); } catch (e) {}
+    }
+
     // Seed default farm facilities if empty
     const [farms] = await pool.query('SELECT count(*) as cnt FROM farms');
     if (farms[0].cnt === 0) {
       await pool.query(`
-        INSERT INTO farms (id, name, crop, location, moisture_min, moisture_max, target_vpd) VALUES
-        ('farm-tomato', 'Greenhouse 1 (Alpha)', 'Tomato (Vegetative)', 'Nanyuki Agrotech Cluster', 35.0, 50.0, 0.85),
-        ('farm-peppers', 'Greenhouse 2 (Beta)', 'Sweet Bell Peppers', 'Zone 2 Automated Bed', 40.0, 55.0, 0.95),
-        ('farm-lettuce', 'Greenhouse 3 (Hydro)', 'Butterhead Lettuce', 'Vertical Hydro Bed 3', 45.0, 65.0, 0.75),
-        ('farm-herbs', 'Greenhouse 4 (Spices)', 'Basil & Mint', 'High-humidity Herb Zone', 30.0, 45.0, 0.90)
+        INSERT INTO farms (id, owner_id, connection_code, name, crop, location, moisture_min, moisture_max, target_vpd) VALUES
+        ('farm-tomato', 'user-01', 'GH-TOMATO1', 'Greenhouse 1 (Alpha)', 'Tomato (Vegetative)', 'Nanyuki Agrotech Cluster', 35.0, 50.0, 0.85),
+        ('farm-peppers', 'user-01', 'GH-PEPPER2', 'Greenhouse 2 (Beta)', 'Sweet Bell Peppers', 'Zone 2 Automated Bed', 40.0, 55.0, 0.95),
+        ('farm-lettuce', 'user-01', 'GH-LETTUCE3', 'Greenhouse 3 (Hydro)', 'Butterhead Lettuce', 'Vertical Hydro Bed 3', 45.0, 65.0, 0.75),
+        ('farm-herbs', 'user-01', 'GH-HERBS004', 'Greenhouse 4 (Spices)', 'Basil & Mint', 'High-humidity Herb Zone', 30.0, 45.0, 0.90)
       `);
       console.log('[TiDB] Seeded initial farm profiles.');
     }
@@ -223,6 +256,12 @@ export async function initTiDB() {
       `, [now, now, now, now, now, now]);
       console.log('[TiDB] Seeded team user accounts.');
     }
+
+    const seededAccessAt = Date.now();
+    for (const [farmId, userId] of [['farm-tomato', 'user-01'], ['farm-peppers', 'user-02'], ['farm-lettuce', 'user-03'], ['farm-herbs', 'user-04']]) {
+      try { await pool.query('INSERT IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) VALUES (?, ?, ?, ?)', [farmId, userId, userId, seededAccessAt]); } catch (e) {}
+    }
+    try { await pool.query(`INSERT IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) SELECT f.id, u.id, u.id, ? FROM farms f JOIN users u ON u.id = f.owner_id WHERE f.id NOT IN ('farm-peppers', 'farm-lettuce', 'farm-herbs')`, [seededAccessAt]); } catch (e) {}
 
     const [settings] = await pool.query('SELECT count(*) as cnt FROM settings');
     if (settings[0].cnt === 0) {
@@ -430,6 +469,78 @@ export const tidb = {
   },
 
   // ─── Farms CRUD ─────────────────────────────────────────────────────────
+  async getFarmsForUser(userId) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT f.* FROM farms f JOIN farm_user_access a ON a.farm_id = f.id WHERE a.user_id = ? ORDER BY f.name', [userId]);
+      return rows;
+    } catch (err) { handleQueryError(err, 'getFarmsForUser'); return null; }
+  },
+
+  async getFarmForUser(id, userId) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT f.* FROM farms f JOIN farm_user_access a ON a.farm_id = f.id WHERE f.id = ? AND a.user_id = ?', [id, userId]);
+      return rows[0] || null;
+    } catch (err) { handleQueryError(err, 'getFarmForUser'); return null; }
+  },
+
+  async getFarmByConnectionCode(code) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM farms WHERE UPPER(connection_code) = UPPER(?)', [String(code || '').trim()]);
+      return rows[0] || null;
+    } catch (err) { handleQueryError(err, 'getFarmByConnectionCode'); return null; }
+  },
+
+  async grantFarmAccess(farmId, userId, grantedBy = userId) {
+    if (!pool || !isConnected) return false;
+    try {
+      await pool.query('INSERT IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) VALUES (?, ?, ?, ?)', [farmId, userId, grantedBy, Date.now()]);
+      return true;
+    } catch (err) { handleQueryError(err, 'grantFarmAccess'); return false; }
+  },
+
+  async createFarmConnectionRequest(request) {
+    if (!pool || !isConnected) return null;
+    const now = Date.now();
+    try {
+      await pool.query(`INSERT INTO farm_connection_requests (id, farm_id, requester_id, requester_owner_id, target_owner_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?) ON DUPLICATE KEY UPDATE status = IF(status = 'DECLINED', 'PENDING', status), updated_at = VALUES(updated_at)`, [request.id, request.farm_id, request.requester_id, request.requester_owner_id, request.target_owner_id, now, now]);
+      const [rows] = await pool.query('SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.farm_id = ? AND r.requester_id = ?', [request.farm_id, request.requester_id]);
+      return rows[0] || null;
+    } catch (err) { handleQueryError(err, 'createFarmConnectionRequest'); return null; }
+  },
+
+  async getFarmConnectionRequestsForUser(userId) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query('SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.requester_id = ? ORDER BY r.created_at DESC', [userId]);
+      return rows;
+    } catch (err) { handleQueryError(err, 'getFarmConnectionRequestsForUser'); return null; }
+  },
+
+  async getPendingFarmConnectionRequests(ownerId) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query(`SELECT r.*, f.name AS farm_name, u.name AS requester_name, u.email AS requester_email FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id LEFT JOIN users u ON u.id = r.requester_id WHERE r.target_owner_id = ? AND r.status = 'PENDING' ORDER BY r.created_at ASC`, [ownerId]);
+      return rows;
+    } catch (err) { handleQueryError(err, 'getPendingFarmConnectionRequests'); return null; }
+  },
+
+  async decideFarmConnectionRequest(requestId, ownerId, decision, reviewedBy) {
+    if (!pool || !isConnected) return null;
+    try {
+      const [rows] = await pool.query("SELECT r.* FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.id = ? AND r.target_owner_id = ? AND f.owner_id = ? AND r.status = 'PENDING'", [requestId, ownerId, ownerId]);
+      const request = rows[0];
+      if (!request) return null;
+      const [result] = await pool.query("UPDATE farm_connection_requests SET status = ?, updated_at = ? WHERE id = ? AND status = 'PENDING'", [decision, Date.now(), requestId]);
+      if (!result.affectedRows) return null;
+      if (decision === 'APPROVED' && !(await this.grantFarmAccess(request.farm_id, request.requester_id, reviewedBy))) return null;
+      const [updated] = await pool.query('SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.id = ?', [requestId]);
+      return updated[0] || null;
+    } catch (err) { handleQueryError(err, 'decideFarmConnectionRequest'); return null; }
+  },
+
   async getFarms(ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
@@ -457,11 +568,12 @@ export const tidb = {
     const id = farm.id || `farm-${Date.now()}`;
     try {
       await pool.query(`
-        INSERT INTO farms (id, owner_id, name, crop, location, moisture_min, moisture_max, target_vpd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO farms (id, owner_id, connection_code, name, crop, location, moisture_min, moisture_max, target_vpd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         id,
         farm.owner_id || 'user-01',
+        farm.connection_code || `GH-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
         farm.name || 'New Greenhouse',
         farm.crop || 'Tomato',
         farm.location || 'Local Cluster',
@@ -508,6 +620,8 @@ export const tidb = {
   async deleteFarm(id, ownerId = 'user-01') {
     if (!pool || !isConnected) return false;
     try {
+      await pool.query('DELETE FROM farm_user_access WHERE farm_id = ?', [id]);
+      await pool.query('DELETE FROM farm_connection_requests WHERE farm_id = ?', [id]);
       const [result] = await pool.query('DELETE FROM farms WHERE id = ? AND owner_id = ?', [id, ownerId]);
       return result.affectedRows > 0;
     } catch (err) {
@@ -636,6 +750,8 @@ export const tidb = {
   async deleteUser(id) {
     if (!pool || !isConnected) return false;
     try {
+      await pool.query('DELETE FROM farm_user_access WHERE user_id = ?', [id]);
+      await pool.query('DELETE FROM farm_connection_requests WHERE requester_id = ?', [id]);
       const [result] = await pool.query('DELETE FROM users WHERE id = ?', [id]);
       return result.affectedRows > 0;
     } catch (err) {

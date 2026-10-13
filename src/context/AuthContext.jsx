@@ -19,10 +19,7 @@ const defaultUser = {
 };
 
 const defaultFarms = [
-  { id: 'farm-tomato', name: 'Greenhouse 1 (Alpha)', crop: 'Tomato (Vegetative)', location: 'Nanyuki Agrotech Cluster', moisture_min: 35.0, moisture_max: 50.0, target_vpd: 0.85 },
-  { id: 'farm-peppers', name: 'Greenhouse 2 (Beta)', crop: 'Sweet Bell Peppers', location: 'Zone 2 Automated Bed', moisture_min: 40.0, moisture_max: 55.0, target_vpd: 0.95 },
-  { id: 'farm-lettuce', name: 'Greenhouse 3 (Hydro)', crop: 'Butterhead Lettuce', location: 'Vertical Hydro Bed 3', moisture_min: 45.0, moisture_max: 65.0, target_vpd: 0.75 },
-  { id: 'farm-herbs', name: 'Greenhouse 4 (Spices)', crop: 'Basil & Mint', location: 'High-humidity Herb Zone', moisture_min: 30.0, moisture_max: 45.0, target_vpd: 0.90 }
+  { id: 'farm-tomato', name: 'Greenhouse 1 (Alpha)', crop: 'Tomato (Vegetative)', location: 'Nanyuki Agrotech Cluster', moisture_min: 35.0, moisture_max: 50.0, target_vpd: 0.85 }
 ];
 
 const defaultTeam = [

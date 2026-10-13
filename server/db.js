@@ -81,12 +81,33 @@ sqlite.exec(`
   CREATE TABLE IF NOT EXISTS farms (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL DEFAULT 'user-01',
+    connection_code TEXT UNIQUE,
     name TEXT NOT NULL,
     crop TEXT NOT NULL,
     location TEXT,
     moisture_min REAL DEFAULT 35.0,
     moisture_max REAL DEFAULT 50.0,
     target_vpd REAL DEFAULT 0.85
+  );
+
+  CREATE TABLE IF NOT EXISTS farm_user_access (
+    farm_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    granted_by TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (farm_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS farm_connection_requests (
+    id TEXT PRIMARY KEY,
+    farm_id TEXT NOT NULL,
+    requester_id TEXT NOT NULL,
+    requester_owner_id TEXT NOT NULL,
+    target_owner_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (farm_id, requester_id)
   );
 
   CREATE TABLE IF NOT EXISTS users (
@@ -124,21 +145,31 @@ try {
 }
 try { sqlite.exec(`ALTER TABLE users ADD COLUMN owner_id TEXT;`); } catch (e) {}
 try { sqlite.exec(`ALTER TABLE farms ADD COLUMN owner_id TEXT;`); } catch (e) {}
+try { sqlite.exec(`ALTER TABLE farms ADD COLUMN connection_code TEXT;`); } catch (e) {}
 sqlite.exec(`UPDATE users SET owner_id = 'user-01' WHERE owner_id IS NULL OR owner_id = '';`);
 sqlite.exec(`UPDATE farms SET owner_id = 'user-01' WHERE owner_id IS NULL OR owner_id = '';`);
+sqlite.exec(`UPDATE farms SET connection_code = 'GH-' || substr(hex(randomblob(4)), 1, 8) WHERE connection_code IS NULL OR connection_code = '';`);
+
+// Each demo account starts with its own assigned greenhouse; other access is opt-in.
+const seedFarmAccess = sqlite.prepare(`INSERT OR IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) VALUES (?, ?, ?, ?)`);
+const farmAccessSeedTime = Date.now();
+for (const [farmId, userId] of [['farm-tomato', 'user-01'], ['farm-peppers', 'user-02'], ['farm-lettuce', 'user-03'], ['farm-herbs', 'user-04']]) {
+  seedFarmAccess.run(farmId, userId, userId, farmAccessSeedTime);
+}
+sqlite.prepare(`INSERT OR IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) SELECT f.id, u.id, u.id, ? FROM farms f JOIN users u ON u.id = f.owner_id WHERE f.id NOT IN ('farm-peppers', 'farm-lettuce', 'farm-herbs')`).run(farmAccessSeedTime);
 
 // ─── 2. Seed Default Data if empty ──────────────────────────────────────────
 const farmCount = sqlite.prepare('SELECT count(*) as cnt FROM farms').get().cnt;
 if (farmCount === 0) {
   const insertFarm = sqlite.prepare(`
-    INSERT INTO farms (id, name, crop, location, moisture_min, moisture_max, target_vpd)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO farms (id, owner_id, connection_code, name, crop, location, moisture_min, moisture_max, target_vpd)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  insertFarm.run('farm-tomato', 'Greenhouse 1 (Alpha)', 'Tomato (Vegetative)', 'Nanyuki Agrotech Cluster', 35.0, 50.0, 0.85);
-  insertFarm.run('farm-peppers', 'Greenhouse 2 (Beta)', 'Sweet Bell Peppers', 'Zone 2 Automated Bed', 40.0, 55.0, 0.95);
-  insertFarm.run('farm-lettuce', 'Greenhouse 3 (Hydro)', 'Butterhead Lettuce', 'Vertical Hydro Bed 3', 45.0, 65.0, 0.75);
-  insertFarm.run('farm-herbs', 'Greenhouse 4 (Spices)', 'Basil & Mint', 'High-humidity Herb Zone', 30.0, 45.0, 0.90);
+  insertFarm.run('farm-tomato', 'user-01', 'GH-TOMATO1', 'Greenhouse 1 (Alpha)', 'Tomato (Vegetative)', 'Nanyuki Agrotech Cluster', 35.0, 50.0, 0.85);
+  insertFarm.run('farm-peppers', 'user-01', 'GH-PEPPER2', 'Greenhouse 2 (Beta)', 'Sweet Bell Peppers', 'Zone 2 Automated Bed', 40.0, 55.0, 0.95);
+  insertFarm.run('farm-lettuce', 'user-01', 'GH-LETTUCE3', 'Greenhouse 3 (Hydro)', 'Butterhead Lettuce', 'Vertical Hydro Bed 3', 45.0, 65.0, 0.75);
+  insertFarm.run('farm-herbs', 'user-01', 'GH-HERBS004', 'Greenhouse 4 (Spices)', 'Basil & Mint', 'High-humidity Herb Zone', 30.0, 45.0, 0.90);
 }
 
 const userCount = sqlite.prepare('SELECT count(*) as cnt FROM users').get().cnt;
@@ -384,6 +415,47 @@ export const db = {
   /**
    * Retrieve all registered farms
    */
+  getFarmsForUser(userId) {
+    return sqlite.prepare(`SELECT f.* FROM farms f JOIN farm_user_access a ON a.farm_id = f.id WHERE a.user_id = ? ORDER BY f.name`).all(userId);
+  },
+
+  getFarmForUser(id, userId) {
+    return sqlite.prepare(`SELECT f.* FROM farms f JOIN farm_user_access a ON a.farm_id = f.id WHERE f.id = ? AND a.user_id = ?`).get(id, userId);
+  },
+
+  getFarmByConnectionCode(code) {
+    return sqlite.prepare('SELECT * FROM farms WHERE UPPER(connection_code) = UPPER(?)').get(String(code || '').trim());
+  },
+
+  grantFarmAccess(farmId, userId, grantedBy = userId) {
+    sqlite.prepare(`INSERT OR IGNORE INTO farm_user_access (farm_id, user_id, granted_by, created_at) VALUES (?, ?, ?, ?)`).run(farmId, userId, grantedBy, Date.now());
+    return this.getFarmForUser(farmId, userId);
+  },
+
+  createFarmConnectionRequest(request) {
+    const now = Date.now();
+    const id = request.id || `fcr-${now}-${Math.random().toString(36).slice(2, 8)}`;
+    sqlite.prepare(`INSERT INTO farm_connection_requests (id, farm_id, requester_id, requester_owner_id, target_owner_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?) ON CONFLICT(farm_id, requester_id) DO UPDATE SET status = CASE WHEN farm_connection_requests.status = 'DECLINED' THEN 'PENDING' ELSE farm_connection_requests.status END, updated_at = excluded.updated_at`).run(id, request.farm_id, request.requester_id, request.requester_owner_id, request.target_owner_id, now, now);
+    return sqlite.prepare(`SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.farm_id = ? AND r.requester_id = ?`).get(request.farm_id, request.requester_id);
+  },
+
+  getFarmConnectionRequestsForUser(userId) {
+    return sqlite.prepare(`SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.requester_id = ? ORDER BY r.created_at DESC`).all(userId);
+  },
+
+  getPendingFarmConnectionRequests(ownerId) {
+    return sqlite.prepare(`SELECT r.*, f.name AS farm_name, u.name AS requester_name, u.email AS requester_email FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id LEFT JOIN users u ON u.id = r.requester_id WHERE r.target_owner_id = ? AND r.status = 'PENDING' ORDER BY r.created_at ASC`).all(ownerId);
+  },
+
+  decideFarmConnectionRequest(requestId, ownerId, decision, reviewedBy) {
+    const row = sqlite.prepare(`SELECT r.* FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.id = ? AND r.target_owner_id = ? AND f.owner_id = ?`).get(requestId, ownerId, ownerId);
+    if (!row || row.status !== 'PENDING') return null;
+    const now = Date.now();
+    sqlite.prepare('UPDATE farm_connection_requests SET status = ?, updated_at = ? WHERE id = ?').run(decision, now, requestId);
+    if (decision === 'APPROVED') this.grantFarmAccess(row.farm_id, row.requester_id, reviewedBy);
+    return sqlite.prepare(`SELECT r.*, f.name AS farm_name FROM farm_connection_requests r JOIN farms f ON f.id = r.farm_id WHERE r.id = ?`).get(requestId);
+  },
+
   getFarms(ownerId = 'user-01') {
     return sqlite.prepare('SELECT * FROM farms WHERE owner_id = ?').all(ownerId);
   },
@@ -395,11 +467,12 @@ export const db = {
   createFarm(farm) {
     const id = farm.id || `farm-${Date.now()}`;
     sqlite.prepare(`
-      INSERT INTO farms (id, owner_id, name, crop, location, moisture_min, moisture_max, target_vpd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO farms (id, owner_id, connection_code, name, crop, location, moisture_min, moisture_max, target_vpd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       farm.owner_id || 'user-01',
+      farm.connection_code || `GH-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
       farm.name || 'New Greenhouse',
       farm.crop || 'Tomato',
       farm.location || 'Local Cluster',
@@ -434,6 +507,10 @@ export const db = {
   },
 
   deleteFarm(id, ownerId = 'user-01') {
+    const farm = this.getFarmById(id, ownerId);
+    if (!farm) return false;
+    sqlite.prepare('DELETE FROM farm_user_access WHERE farm_id = ?').run(id);
+    sqlite.prepare('DELETE FROM farm_connection_requests WHERE farm_id = ?').run(id);
     const result = sqlite.prepare('DELETE FROM farms WHERE id = ? AND owner_id = ?').run(id, ownerId);
     return result.changes > 0;
   },
@@ -518,6 +595,8 @@ export const db = {
   },
 
   deleteUser(id) {
+    sqlite.prepare('DELETE FROM farm_user_access WHERE user_id = ?').run(id);
+    sqlite.prepare('DELETE FROM farm_connection_requests WHERE requester_id = ?').run(id);
     const result = sqlite.prepare('DELETE FROM users WHERE id = ?').run(id);
     return result.changes > 0;
   },

@@ -21,6 +21,7 @@ export default function AlertsView() {
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'warnings' | 'info'
   const [dbAlerts, setDbAlerts] = useState([]);
   const [notifPerm, setNotifPerm] = useState(getNotificationPermission());
+  const [isRequestingNotif, setIsRequestingNotif] = useState(false);
   const [dismissedIds, setDismissedIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem(dismissedStorageKey) || '[]'); } catch { return []; }
   });
@@ -32,13 +33,21 @@ export default function AlertsView() {
   }, [dismissedStorageKey]);
 
   const handleRequestNotif = async () => {
-    const p = await requestNotificationPermission();
-    setNotifPerm(p);
-    setNotice(p === 'granted'
-      ? 'OS alerts are enabled for this browser. A test notification should appear now.'
-      : p === 'denied'
-        ? 'Permission was blocked. Allow notifications for this site in browser settings, then reload.'
-        : 'OS notifications need a supported browser and a secure HTTPS page.');
+    setIsRequestingNotif(true);
+    setNotice('Waiting for the browser notification permission prompt...');
+    try {
+      const p = await requestNotificationPermission();
+      setNotifPerm(p);
+      setNotice(p === 'granted'
+        ? 'OS alerts are enabled for this browser. A test notification was requested.'
+        : p === 'denied'
+          ? 'Notifications are blocked. In Edge, open the lock icon by the address, set Notifications to Allow, then reload this page.'
+          : p === 'default'
+            ? 'No permission was granted. Allow notifications in the browser prompt, or check this site’s Notifications permission in Edge settings.'
+            : 'OS notifications need a supported browser and a secure HTTPS page.');
+    } finally {
+      setIsRequestingNotif(false);
+    }
   };
 
   const handleTestNotif = async () => {
@@ -293,6 +302,7 @@ export default function AlertsView() {
           {notifPerm === 'default' && (
             <button
               onClick={handleRequestNotif}
+              disabled={isRequestingNotif}
               style={{
                 background: '#047857',
                 color: '#ffffff',
@@ -307,7 +317,7 @@ export default function AlertsView() {
                 gap: '0.35rem'
               }}
             >
-              <Bell size={14} /> Enable OS Alerts
+              <Bell size={14} /> {isRequestingNotif ? 'Waiting for browser...' : 'Enable OS Alerts'}
             </button>
           )}
           <button

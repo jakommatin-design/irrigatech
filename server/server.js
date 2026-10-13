@@ -8,6 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { createHash, randomBytes } from 'crypto';
 import { SerialBridge } from './serial-bridge.js';
 import { db } from './db.js';
 import { initTiDB, tidb } from './tidb.js';
@@ -107,6 +108,25 @@ if (distDir) {
 
 const bridge = new SerialBridge();
 const ussd = new UssdService(bridge, db, tidb, aiAgronomy);
+
+// Issue a per-user Cloudinary upload signature; the API secret stays server-side.
+app.post('/api/cloudinary/profile-signature', authenticateToken, (req, res) => {
+  const { CLOUDINARY_CLOUD_NAME: cloudName, CLOUDINARY_API_KEY: apiKey, CLOUDINARY_API_SECRET: apiSecret } = process.env;
+  if (!cloudName || !apiKey || !apiSecret) {
+    return res.status(503).json({ error: 'Profile photo uploads are not configured on this server.' });
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const folder = 'irrigatech/profile-photos';
+  const userId = String(req.auth.id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+  if (!userId) return res.status(400).json({ error: 'Account identifier is invalid.' });
+  const publicId = `${userId}-${randomBytes(6).toString('hex')}`;
+  const params = { folder, overwrite: 'true', public_id: publicId, timestamp };
+  const signingText = Object.keys(params).sort().map(key => `${key}=${params[key]}`).join('&');
+  const signature = createHash('sha1').update(`${signingText}${apiSecret}`).digest('hex');
+
+  return res.json({ cloudName, apiKey, timestamp, folder, publicId, overwrite: true, signature });
+});
 
 // System configuration per Blueprint Section 6.2 & 7.1
 const deviceConfig = {
@@ -306,30 +326,74 @@ app.get('/api/alerts', authenticateToken, async (req, res) => {
 // ─── 1. Farms CRUD Endpoints ─────────────────────────────────────────────
 // GET /api/farms
 app.get('/api/farms', authenticateToken, async (req, res) => {
-  const ownerId = req.auth.ownerId || req.auth.id;
-  let farms = await tidb.getFarms(ownerId);
-  if (!farms || farms.length === 0) {
-    farms = db.getFarms(ownerId);
+  let farms = await tidb.getFarmsForUser(req.auth.id);
+  if (!farms) farms = db.getFarmsForUser(req.auth.id);
+  res.json({ farms: farms || [] });
+});
+
+// Users can request another greenhouse by its owner-shared connection code.
+app.post('/api/farm-connections', authenticateToken, async (req, res) => {
+  const code = String(req.body?.code || '').trim().toUpperCase();
+  if (!/^[A-Z0-9-]{6,32}$/.test(code)) return res.status(400).json({ error: 'Enter a valid greenhouse connection code.' });
+  const farm = await tidb.getFarmByConnectionCode(code) || db.getFarmByConnectionCode(code);
+  if (!farm) return res.status(404).json({ error: 'No greenhouse was found for that connection code.' });
+  if (await tidb.getFarmForUser(farm.id, req.auth.id) || db.getFarmForUser(farm.id, req.auth.id)) {
+    return res.status(409).json({ error: 'This greenhouse is already connected to your account.' });
   }
-  res.json({ farms });
+  const request = {
+    id: `fcr-${randomBytes(12).toString('hex')}`,
+    farm_id: farm.id,
+    requester_id: req.auth.id,
+    requester_owner_id: req.auth.ownerId || req.auth.id,
+    target_owner_id: farm.owner_id,
+  };
+  const cloudRequest = await tidb.createFarmConnectionRequest(request);
+  const localRequest = db.createFarmConnectionRequest(request);
+  const created = cloudRequest || localRequest;
+  if (!created) return res.status(500).json({ error: 'Could not create greenhouse connection request.' });
+  res.status(201).json({ request: created });
+});
+
+app.get('/api/farm-connections', authenticateToken, async (req, res) => {
+  let mine = await tidb.getFarmConnectionRequestsForUser(req.auth.id);
+  if (!mine) mine = db.getFarmConnectionRequestsForUser(req.auth.id);
+  let pending = [];
+  if (['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(req.auth.role || '').toLowerCase())) {
+    pending = await tidb.getPendingFarmConnectionRequests(req.auth.ownerId || req.auth.id);
+    if (!pending) pending = db.getPendingFarmConnectionRequests(req.auth.ownerId || req.auth.id);
+  }
+  res.json({ mine: mine || [], pending: pending || [] });
+});
+
+app.post('/api/farm-connections/:id/decision', authenticateToken, requireFarmAdmin, async (req, res) => {
+  const decision = String(req.body?.decision || '').toUpperCase();
+  if (!['APPROVED', 'DECLINED'].includes(decision)) return res.status(400).json({ error: 'Decision must be APPROVED or DECLINED.' });
+  const ownerId = req.auth.ownerId || req.auth.id;
+  const cloudResult = await tidb.decideFarmConnectionRequest(req.params.id, ownerId, decision, req.auth.id);
+  const localResult = db.decideFarmConnectionRequest(req.params.id, ownerId, decision, req.auth.id);
+  const request = cloudResult || localResult;
+  if (!request) return res.status(404).json({ error: 'Pending greenhouse request not found.' });
+  if (decision === 'APPROVED') await tidb.grantFarmAccess(request.farm_id, request.requester_id, req.auth.id);
+  res.json({ request });
 });
 
 // GET /api/farms/:id
 app.get('/api/farms/:id', authenticateToken, async (req, res) => {
-  const ownerId = req.auth.ownerId || req.auth.id;
-  let farm = await tidb.getFarmById(req.params.id, ownerId);
-  if (!farm) farm = db.getFarmById(req.params.id, ownerId);
+  let farm = await tidb.getFarmForUser(req.params.id, req.auth.id);
+  if (!farm) farm = db.getFarmForUser(req.params.id, req.auth.id);
   if (!farm) return res.status(404).json({ error: 'Farm not found' });
   res.json({ farm });
 });
 
 // POST /api/farms
 app.post('/api/farms', authenticateToken, requireFarmAdmin, async (req, res) => {
-  const farmData = { ...req.body, owner_id: req.auth.ownerId || req.auth.id };
+  const farmData = { ...req.body, id: `farm-${randomBytes(10).toString('hex')}`, connection_code: `GH-${randomBytes(5).toString('hex').toUpperCase()}`, owner_id: req.auth.ownerId || req.auth.id };
   if (!validFarm(farmData)) return res.status(400).json({ error: 'Provide a farm name and crop, valid 0–100 moisture thresholds, and a non-negative VPD target.' });
-  let created = await tidb.createFarm(farmData);
+  const cloudCreated = await tidb.createFarm(farmData);
   const localCreated = db.createFarm(farmData);
-  if (!created) created = localCreated;
+  let created = cloudCreated || localCreated;
+  await tidb.grantFarmAccess(created.id, req.auth.id, req.auth.id);
+  db.grantFarmAccess(created.id, req.auth.id, req.auth.id);
   io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('farms_updated', { action: 'create', farm: created });
   res.status(201).json({ farm: created });
 });
@@ -404,7 +468,8 @@ app.post('/api/auth/register', async (req, res) => {
     let createdFarm = null;
     if (farmName && farmName.trim()) {
       const farmPayload = {
-        id: `farm-${Date.now()}`,
+        id: `farm-${randomBytes(10).toString('hex')}`,
+        connection_code: `GH-${randomBytes(5).toString('hex').toUpperCase()}`,
         owner_id: userId,
         name: farmName.trim(),
         crop: 'Tomato (Vegetative Phase)',
@@ -413,8 +478,11 @@ app.post('/api/auth/register', async (req, res) => {
         moisture_max: 50.0,
         target_vpd: 0.85
       };
-      createdFarm = await tidb.createFarm(farmPayload);
-      if (!createdFarm) createdFarm = db.createFarm(farmPayload);
+      const cloudFarm = await tidb.createFarm(farmPayload);
+      const localFarm = db.createFarm(farmPayload);
+      createdFarm = cloudFarm || localFarm;
+      await tidb.grantFarmAccess(createdFarm.id, userId, userId);
+      db.grantFarmAccess(createdFarm.id, userId, userId);
       io.to(`owner:${userId}`).emit('farms_updated', { action: 'create', farm: createdFarm });
     }
 

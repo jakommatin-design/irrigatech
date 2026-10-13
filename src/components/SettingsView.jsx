@@ -7,6 +7,7 @@ import {
   Sparkles, Bell, Globe, Key, LogOut
 } from 'lucide-react';
 import AccountPortal from './AccountPortal';
+import { getUserInitials, isProfilePhoto } from '../utils/avatar';
 
 export default function SettingsView({ onNavigate }) {
   const { user, logout, settings, updateSettings, farms, isAuthenticated } = useAuth();
@@ -123,7 +124,7 @@ export default function SettingsView({ onNavigate }) {
             fontWeight: 800,
             boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
           }}>
-            FJ
+            {isProfilePhoto(user?.avatar) ? <img src={user.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : getUserInitials(user)}
           </div>
           <div>
             <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>

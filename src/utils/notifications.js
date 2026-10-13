@@ -13,9 +13,19 @@ export const getNotificationPermission = () => {
 export const requestNotificationPermission = async () => {
   if (!isNotificationSupported()) return 'unsupported';
   try {
+    // Call this immediately from the button gesture. Do not await service-worker
+    // setup before requesting permission; browsers may otherwise suppress the prompt.
     const permission = await Notification.requestPermission();
+    if (permission === 'granted' && 'serviceWorker' in navigator) {
+      try {
+        await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        await navigator.serviceWorker.ready;
+      } catch (err) {
+        // The app can still use the Notification API when service workers are unavailable.
+        console.warn('Notification service worker setup failed:', err);
+      }
+    }
     if (permission === 'granted') {
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
       await sendExternalNotification('🌱 Irriga-Tech Alerts Enabled', {
         body: 'System alerts are enabled while this site is open or running in the background.',
         tag: 'irrigatech-welcome'
@@ -24,7 +34,7 @@ export const requestNotificationPermission = async () => {
     return permission;
   } catch (err) {
     console.warn('Notification permission request error:', err);
-    return 'denied';
+    return Notification.permission === 'default' ? 'default' : Notification.permission;
   }
 };
 

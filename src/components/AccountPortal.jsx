@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSensors } from '../context/SensorContext';
+import { isProfilePhoto } from '../utils/avatar';
 import { 
   User, Building2, Sprout, ShieldCheck, Key, 
   LogOut, CheckCircle2, ChevronRight, Plus, Droplets,
@@ -13,7 +14,7 @@ export default function AccountPortal() {
     isAuthenticated,
     deleteMyAccount,
     addFarm, updateFarm, deleteFarm,
-    addUser, updateUser, deleteUser
+    addUser, updateUser, deleteUser, getApiUrl, authHeaders, refreshData
   } = useAuth();
   const { setThreshold } = useSensors();
   const farmList = Array.isArray(farms) ? farms : [];
@@ -22,6 +23,13 @@ export default function AccountPortal() {
   const canManageAccounts = isAuthenticated && ['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(user?.role || '').toLowerCase());
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [profilePhotoFile, setProfilePhotoFile] = useState(null);
+  const [profilePhotoPreview, setProfilePhotoPreview] = useState('');
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [connectionCode, setConnectionCode] = useState('');
+  const [connectionRequests, setConnectionRequests] = useState([]);
+  const [pendingConnectionRequests, setPendingConnectionRequests] = useState([]);
+  const [isSubmittingConnection, setIsSubmittingConnection] = useState(false);
 
   const handleDeleteAccount = async () => {
     const confirmed = window.confirm(
@@ -75,6 +83,50 @@ export default function AccountPortal() {
       role: user?.role || ''
     });
   }, [user]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setConnectionRequests([]);
+      setPendingConnectionRequests([]);
+      return;
+    }
+    fetch(`${getApiUrl()}/api/farm-connections`, { headers: authHeaders() })
+      .then(res => res.ok ? res.json() : { mine: [], pending: [] })
+      .then(data => {
+        setConnectionRequests(Array.isArray(data.mine) ? data.mine : []);
+        setPendingConnectionRequests(Array.isArray(data.pending) ? data.pending : []);
+      })
+      .catch(() => { setConnectionRequests([]); setPendingConnectionRequests([]); });
+  }, [isAuthenticated, getApiUrl, authHeaders]);
+
+  const requestFarmConnection = async (event) => {
+    event.preventDefault();
+    setActionError('');
+    setIsSubmittingConnection(true);
+    try {
+      const res = await fetch(`${getApiUrl()}/api/farm-connections`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ code: connectionCode.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not request greenhouse access.');
+      setConnectionCode('');
+      setConnectionRequests(prev => [data.request, ...prev.filter(item => item.id !== data.request.id)]);
+    } catch (err) { setActionError(err.message); }
+    finally { setIsSubmittingConnection(false); }
+  };
+
+  const decideFarmConnection = async (requestId, decision) => {
+    setActionError('');
+    try {
+      const res = await fetch(`${getApiUrl()}/api/farm-connections/${encodeURIComponent(requestId)}/decision`, {
+        method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ decision })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not update greenhouse access request.');
+      setPendingConnectionRequests(prev => prev.filter(item => item.id !== requestId));
+    } catch (err) { setActionError(err.message); }
+  };
 
   const selectedCropObj = user?.crops?.find(c => c.id === user.selectedCrop) || (user?.crops ? user.crops[0] : null);
 
@@ -174,13 +226,62 @@ export default function AccountPortal() {
     }
   };
 
+  const handleProfilePhotoSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setActionError('Choose an image file for your profile photo.');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setActionError('Profile photos must be 5 MB or smaller.');
+      event.target.value = '';
+      return;
+    }
+    setActionError('');
+    setProfilePhotoFile(file);
+    setProfilePhotoPreview(URL.createObjectURL(file));
+  };
+
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     setActionError('');
+    let profileUpdate = { ...profileForm };
     try {
-      await updateUser(user.id, profileForm);
+      if (profilePhotoFile) {
+        setIsUploadingPhoto(true);
+        const signatureRes = await fetch(`${getApiUrl()}/api/cloudinary/profile-signature`, {
+          method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: '{}'
+        });
+        const signatureData = await signatureRes.json();
+        if (!signatureRes.ok) throw new Error(signatureData.error || 'Could not prepare secure photo upload.');
+
+        const uploadForm = new FormData();
+        uploadForm.append('file', profilePhotoFile);
+        uploadForm.append('api_key', signatureData.apiKey);
+        uploadForm.append('timestamp', String(signatureData.timestamp));
+        uploadForm.append('folder', signatureData.folder);
+        uploadForm.append('public_id', signatureData.publicId);
+        uploadForm.append('overwrite', String(signatureData.overwrite));
+        uploadForm.append('signature', signatureData.signature);
+        const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(signatureData.cloudName)}/image/upload`, {
+          method: 'POST', body: uploadForm
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok || !uploadData.secure_url) throw new Error(uploadData.error?.message || 'Cloudinary photo upload failed.');
+        profileUpdate.avatar = uploadData.secure_url;
+      }
+
+      await updateUser(user.id, profileUpdate);
+      setProfilePhotoFile(null);
+      setProfilePhotoPreview('');
       setIsEditingProfile(false);
-    } catch (err) { setActionError(err.message); }
+    } catch (err) {
+      setActionError(err.message || 'Could not save profile.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
   return (
@@ -224,7 +325,7 @@ export default function AccountPortal() {
                 fontWeight: 800,
                 boxShadow: '0 8px 16px rgba(16, 185, 129, 0.25)'
               }}>
-                {user.avatar || '👨‍🌾'}
+                {isProfilePhoto(user?.avatar) ? <img src={user.avatar} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : user.avatar || '👨‍🌾'}
               </div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -350,6 +451,13 @@ export default function AccountPortal() {
                   <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>Role (managed by farm administrator)</label>
                 <input type="text" value={profileForm.role} readOnly aria-readonly="true" style={{ width: '100%', padding: '0.55rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', background: '#f8fafc' }} />
               </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label htmlFor="profile-photo" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', display: 'block', marginBottom: '.4rem' }}>Profile photo (up to 5 MB)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem', flexWrap: 'wrap' }}>
+                  {(profilePhotoPreview || (isProfilePhoto(user?.avatar) ? user.avatar : '')) && <img src={profilePhotoPreview || user.avatar} alt="Profile photo preview" style={{ width: 52, height: 52, borderRadius: '50%', objectFit: 'cover' }} />}
+                  <input id="profile-photo" type="file" accept="image/*" onChange={handleProfilePhotoSelect} style={{ maxWidth: '100%' }} />
+                </div>
+              </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
               <button
@@ -361,9 +469,10 @@ export default function AccountPortal() {
               </button>
               <button
                 type="submit"
+                disabled={isUploadingPhoto}
                 style={{ padding: '0.5rem 1.25rem', borderRadius: '8px', border: 'none', background: '#15803d', color: '#ffffff', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
               >
-                Save Changes
+                {isUploadingPhoto ? 'Uploading...' : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -448,6 +557,7 @@ export default function AccountPortal() {
                   <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '0.25rem' }}>
                     📍 {farm.location || 'Greenhouse Site'} • 🌱 {farm.crop} • 💧 Target: {farm.moisture_min}–{farm.moisture_max}%
                   </div>
+                  {farm.connection_code && <div style={{ fontSize: '0.7rem', color: '#15803d', marginTop: '.25rem', fontWeight: 700 }}>Connection code: {farm.connection_code} <span style={{ color: '#64748b', fontWeight: 400 }}>· Share it to receive an access request</span></div>}
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -493,6 +603,18 @@ export default function AccountPortal() {
               </div>
             );
           })}
+        </div>
+
+        <div style={{ marginTop: '1rem', padding: '1rem', borderRadius: 14, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+          <h3 style={{ margin: '0 0 .35rem', fontSize: '.95rem', color: '#0f172a' }}>Connect another greenhouse</h3>
+          <p style={{ margin: '0 0 .75rem', fontSize: '.78rem', color: '#64748b' }}>Enter its connection code. The greenhouse owner must approve before its details appear in your account.</p>
+          <form onSubmit={requestFarmConnection} style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
+            <input aria-label="Greenhouse connection code" value={connectionCode} onChange={event => setConnectionCode(event.target.value.toUpperCase())} placeholder="GH-XXXXXXXXXX" maxLength={32} disabled={!isAuthenticated || isSubmittingConnection} style={{ flex: '1 1 220px', padding: '.6rem .7rem', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+            <button type="submit" disabled={!isAuthenticated || isSubmittingConnection || !connectionCode.trim()} style={{ padding: '.6rem .9rem', background: '#15803d', color: '#fff', border: 0, borderRadius: 8, fontWeight: 700, cursor: 'pointer', opacity: !isAuthenticated ? .55 : 1 }}>{isSubmittingConnection ? 'Sending…' : 'Request access'}</button>
+          </form>
+          {!isAuthenticated && <div style={{ marginTop: '.45rem', color: '#92400e', fontSize: '.75rem' }}>Sign in to request a greenhouse connection.</div>}
+          {connectionRequests.length > 0 && <div style={{ marginTop: '.75rem' }}><strong style={{ fontSize: '.8rem' }}>Your connection requests</strong>{connectionRequests.map(request => <div key={request.id} style={{ fontSize: '.78rem', color: '#475569', paddingTop: '.35rem' }}>{request.farm_name} · {request.status.toLowerCase()}</div>)}</div>}
+          {canManageAccounts && pendingConnectionRequests.length > 0 && <div style={{ marginTop: '.85rem' }}><strong style={{ fontSize: '.8rem' }}>Requests for your greenhouses</strong>{pendingConnectionRequests.map(request => <div key={request.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.75rem', flexWrap: 'wrap', paddingTop: '.55rem' }}><span style={{ fontSize: '.78rem', color: '#475569' }}>{request.requester_name || request.requester_email} requests {request.farm_name}</span><span style={{ display: 'flex', gap: '.4rem' }}><button type="button" onClick={() => decideFarmConnection(request.id, 'APPROVED')} style={{ padding: '.35rem .6rem', border: 0, borderRadius: 7, background: '#dcfce7', color: '#166534', fontWeight: 700, cursor: 'pointer' }}>Approve</button><button type="button" onClick={() => decideFarmConnection(request.id, 'DECLINED')} style={{ padding: '.35rem .6rem', border: 0, borderRadius: 7, background: '#fee2e2', color: '#991b1b', fontWeight: 700, cursor: 'pointer' }}>Decline</button></span></div>)}</div>}
         </div>
       </div>
 
@@ -556,7 +678,7 @@ export default function AccountPortal() {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '1.4rem' }}>{member.avatar || '👨‍🌾'}</span>
+                    <span style={{ fontSize: '1.4rem' }}>{isProfilePhoto(member.avatar) ? <img src={member.avatar} alt="" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }} /> : member.avatar || '👨‍🌾'}</span>
                     <div>
                       <div style={{ fontWeight: 800, fontSize: '0.9rem', color: '#0f172a' }}>{member.name}</div>
                       <div style={{ fontSize: '0.72rem', color: '#16a34a', fontWeight: 700 }}>{member.role}</div>
