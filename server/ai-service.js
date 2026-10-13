@@ -15,7 +15,7 @@ import 'dotenv/config';
 export class AiAgronomyService {
   constructor() {
     this.geminiApiKey = process.env.GEMINI_API_KEY || null;
-    this.geminiModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    this.geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
   }
 
   /**
