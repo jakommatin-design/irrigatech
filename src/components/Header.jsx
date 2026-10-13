@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useSensors } from '../context/SensorContext';
 import { 
   Home, Activity, Droplets, Sprout, Sun, 
-  Fan, Bell, BarChart2, Settings, Terminal,
+  Fan, Bell, BarChart2, Settings, Terminal, Phone,
   ChevronDown
 } from 'lucide-react';
 import logoImg from '../assets/site_logo.jpeg';
@@ -22,6 +22,7 @@ export default function Header({ currentTab, setCurrentTab }) {
 
   // Secondary modules accessible cleanly via "More" dropdown
   const moreNav = [
+    { id: 'ussd', label: 'USSD (*384*4744#)', icon: Phone },
     { id: 'climate', label: 'Climate Control', icon: Fan },
     { id: 'alerts', label: 'Alerts & Notifications', icon: Bell },
     { id: 'analytics', label: 'Analytics & History', icon: BarChart2 },

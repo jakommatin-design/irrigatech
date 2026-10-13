@@ -114,7 +114,27 @@ export async function initTiDB() {
         zone_id INT DEFAULT 1,
         duration_seconds INT DEFAULT 0,
         water_liters FLOAT DEFAULT 0.0,
+        soil_ph FLOAT DEFAULT 6.2,
+        fertilizer_advice TEXT,
         INDEX idx_irrigation_ts (timestamp)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Add safe column migrations in case table exists
+    try { await pool.query(`ALTER TABLE irrigation_events ADD COLUMN soil_ph FLOAT DEFAULT 6.2`); } catch (e) {}
+    try { await pool.query(`ALTER TABLE irrigation_events ADD COLUMN fertilizer_advice TEXT`); } catch (e) {}
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sms_messages (
+        id VARCHAR(64) PRIMARY KEY,
+        timestamp BIGINT NOT NULL,
+        iso_time VARCHAR(35) NOT NULL,
+        recipient VARCHAR(32) NOT NULL,
+        message TEXT NOT NULL,
+        type VARCHAR(32) DEFAULT 'NOTIFICATION',
+        status VARCHAR(32) DEFAULT 'DELIVERED',
+        gateway VARCHAR(32) DEFAULT 'Simulated',
+        INDEX idx_sms_ts (timestamp)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
@@ -277,18 +297,52 @@ export const tidb = {
     }
   },
 
-  async logIrrigation(action, source = 'AUTO', reason = 'SCHEDULE', zoneId = 1, duration = 0, waterLiters = 0.0) {
+  async logIrrigation(action, source = 'AUTO', reason = 'SCHEDULE', zoneId = 1, duration = 0, waterLiters = 0.0, soilPh = 6.2, fertilizerAdvice = null) {
     if (!pool || !isConnected) return null;
     try {
       const ts = Date.now();
+      const adviceStr = typeof fertilizerAdvice === 'object' ? JSON.stringify(fertilizerAdvice) : fertilizerAdvice;
       const query = `
         INSERT INTO irrigation_events (
-          timestamp, iso_time, action, reason, source, zone_id, duration_seconds, water_liters
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          timestamp, iso_time, action, reason, source, zone_id, duration_seconds, water_liters, soil_ph, fertilizer_advice
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-      await pool.query(query, [ts, new Date(ts).toISOString(), action, reason, source, zoneId, duration, waterLiters]);
+      await pool.query(query, [ts, new Date(ts).toISOString(), action, reason, source, zoneId, duration, waterLiters, soilPh, adviceStr]);
     } catch (err) {
       handleQueryError(err, 'logIrrigation');
+    }
+  },
+
+  async logSms(sms) {
+    if (!pool || !isConnected) return null;
+    try {
+      const query = `
+        INSERT INTO sms_messages (id, timestamp, iso_time, recipient, message, type, status, gateway)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      await pool.query(query, [
+        sms.id || `sms-${Date.now()}`,
+        sms.timestamp || Date.now(),
+        sms.isoTime || new Date().toISOString(),
+        sms.recipient || '+254712345678',
+        sms.message || '',
+        sms.type || 'NOTIFICATION',
+        sms.status || 'DELIVERED',
+        sms.gateway || 'Simulated'
+      ]);
+    } catch (err) {
+      handleQueryError(err, 'logSms');
+    }
+  },
+
+  async getSmsLogs(limit = 50) {
+    if (!pool || !isConnected) return [];
+    try {
+      const [rows] = await pool.query(`SELECT * FROM sms_messages ORDER BY timestamp DESC LIMIT ?`, [limit]);
+      return rows;
+    } catch (err) {
+      handleQueryError(err, 'getSmsLogs');
+      return [];
     }
   },
 

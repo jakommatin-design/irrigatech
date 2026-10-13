@@ -10,6 +10,8 @@ export class SerialBridge extends EventEmitter {
       temperature: 28.2,
       humidity: 68.0,
       soilMoisture: 42.0,
+      soilPh: 6.2,
+      flowRate: 12.0,
       lightLux: 720,
       pump: false,
       ac: false,
@@ -20,6 +22,7 @@ export class SerialBridge extends EventEmitter {
       solarWatts: 180,
       uptime: 0
     };
+    this.pumpStartTime = null;
     this.simInterval = null;
   }
 
@@ -71,6 +74,7 @@ export class SerialBridge extends EventEmitter {
     try {
       this.emit('rawSerial', line);
       const parts = line.split(',');
+      const prevPump = this.state.pump;
       parts.forEach(part => {
         const [key, val] = part.split(':');
         if (key === 'T') this.state.temperature = parseFloat(val);
@@ -80,16 +84,43 @@ export class SerialBridge extends EventEmitter {
           const raw = parseInt(val, 10);
           this.state.soilMoisture = parseFloat(((raw / 1023) * 100).toFixed(1));
         }
+        if (key === 'PH') this.state.soilPh = parseFloat(val);
         if (key === 'P') this.state.pump = val.trim() === '1';
       });
+
+      this.checkPumpStateTransition(prevPump, this.state.pump);
       this.emit('telemetry', { ...this.state });
     } catch (err) {
       console.warn('Failed parsing serial line:', line);
     }
   }
 
+  checkPumpStateTransition(prevPump, currentPump) {
+    if (!prevPump && currentPump) {
+      // Pump started
+      this.pumpStartTime = Date.now();
+      this.emit('irrigation_started', { startTime: this.pumpStartTime, zoneId: 1 });
+    } else if (prevPump && !currentPump) {
+      // Pump finished
+      const durationSeconds = this.pumpStartTime 
+        ? Math.max(10, Math.round((Date.now() - this.pumpStartTime) / 1000))
+        : 180;
+      const flowRateLpm = this.state.flowRate || 12.0;
+      const waterLiters = parseFloat(((durationSeconds / 60) * flowRateLpm).toFixed(1));
+      this.pumpStartTime = null;
+
+      this.emit('irrigation_cycle_finished', {
+        durationSeconds,
+        waterLiters,
+        soilPh: this.state.soilPh || 6.2,
+        zoneId: 1
+      });
+    }
+  }
+
   sendCommand(cmd) {
     console.log(`[SerialBridge] Executing command: ${cmd}`);
+    const prevPump = this.state.pump;
     if (this.port && this.port.isOpen) {
       this.port.write(`${cmd}\n`);
     } else {
@@ -100,6 +131,8 @@ export class SerialBridge extends EventEmitter {
       if (cmd === 'AC_OFF')   { this.state.ac = false; }
       if (cmd === 'LED_ON')   { this.state.led = true; }
       if (cmd === 'LED_OFF')  { this.state.led = false; }
+
+      this.checkPumpStateTransition(prevPump, this.state.pump);
       this.emit('telemetry', { ...this.state });
     }
   }
@@ -121,6 +154,8 @@ export class SerialBridge extends EventEmitter {
       this.state.temperature = drift(this.state.temperature, 22, 34, 0.2);
       this.state.humidity    = drift(this.state.humidity, 45, 85, 0.5);
       
+      const prevPump = this.state.pump;
+
       // If pump is active, soil moisture decreases (becomes wetter), else dries slowly
       if (this.state.pump) {
         this.state.soilMoisture = Math.max(30, this.state.soilMoisture - 2.5);
@@ -138,6 +173,8 @@ export class SerialBridge extends EventEmitter {
           this.state.led = true;
         }
       }
+
+      this.checkPumpStateTransition(prevPump, this.state.pump);
 
       this.state.solarWatts     = drift(this.state.solarWatts, 0, 240, 4);
       this.state.lightLux       = drift(this.state.lightLux, 250, 1100, 20);

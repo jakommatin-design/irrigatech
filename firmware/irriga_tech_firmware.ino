@@ -25,6 +25,7 @@
 #define DHTPIN 2              // Digital pin for DHT11 sensor
 #define DHTTYPE DHT11         // DHT 11
 #define SOIL_MOISTURE_PIN A0  // Analog pin for FC-28 soil moisture sensor
+#define PH_SENSOR_PIN A1      // Analog pin for Soil pH Sensor probe (PH-4502C / E-201-C)
 #define RELAY_PIN 3           // Relay for Water Pump
 #define AC_PIN 7              // Relay for AC / Ventilation Fan
 #define LED_PIN 8             // Buzzer & Status LED
@@ -163,6 +164,10 @@ void readSensorsAndUpdate() {
   lcd.print("% P:");
   lcd.print(pumpState ? "ON " : "OFF");
 
+  // Read analog soil pH probe (A1)
+  int rawPh = analogRead(PH_SENSOR_PIN);
+  float soilPh = 3.5 + (rawPh / 1023.0) * 5.5; // Calibration: maps ADC to 3.5–9.0 pH range
+
   // Output structured JSON telemetry for Web/Serial Bridge
   Serial.print("{\"temperature\":");
   Serial.print(temp, 1);
@@ -170,6 +175,8 @@ void readSensorsAndUpdate() {
   Serial.print(hum, 1);
   Serial.print(",\"soilMoisture\":");
   Serial.print(soilDryPercentage, 1);
+  Serial.print(",\"soilPh\":");
+  Serial.print(soilPh, 2);
   Serial.print(",\"pump\":");
   Serial.print(pumpState ? "true" : "false");
   Serial.print(",\"ac\":");

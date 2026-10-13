@@ -80,10 +80,10 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 1. Go to [railway.app](https://railway.app) and click **New Project** → **Deploy from GitHub repo**.
 2. Select `jakommatin-design/irrigatech`.
 3. In **Variables**, add your TiDB Cloud credentials:
-   - `TIDB_HOST` = `gateway01.ap-northeast-1.prod.aws.tidbcloud.com`
+   - `TIDB_HOST` = `<your-cluster-host>.prod.aws.tidbcloud.com`
    - `TIDB_PORT` = `4000`
-   - `TIDB_USER` = `V5nFR5aVnYe1aC9.root`
-   - `TIDB_PASSWORD` = `5CSKLufPf7lwzngF`
+   - `TIDB_USER` = `<your-tidb-username>`
+   - `TIDB_PASSWORD` = `<your-secure-tidb-password>`
    - `TIDB_DATABASE` = `irrigatech`
    - `TIDB_SSL` = `true`
    - `PORT` = `3000`

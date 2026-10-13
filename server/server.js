@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -10,6 +11,8 @@ import jwt from 'jsonwebtoken';
 import { SerialBridge } from './serial-bridge.js';
 import { db } from './db.js';
 import { initTiDB, tidb } from './tidb.js';
+import { aiAgronomy } from './ai-service.js';
+import { UssdService } from './ussd-service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'irrigatech-jwt-secret-key-2026';
 
@@ -48,6 +51,7 @@ if (distDir) {
 }
 
 const bridge = new SerialBridge();
+const ussd = new UssdService(bridge, db, tidb, aiAgronomy);
 
 // System configuration per Blueprint Section 6.2 & 7.1
 const deviceConfig = {
@@ -118,6 +122,63 @@ bridge.on('status', (status) => {
     port: status.port,
     tidb: tidb.getStatus()
   });
+});
+
+// Post-Irrigation Automated Notification & AI Agronomy Advisory Pipeline
+bridge.on('irrigation_cycle_finished', async (data) => {
+  const { durationSeconds = 180, waterLiters = 36.0, soilPh = null, zoneId = 1 } = data;
+  console.log(`[Irrigation Complete] Duration: ${durationSeconds}s | Water: ${waterLiters}L | Soil pH: ${soilPh}`);
+
+  try {
+    // 1. Fetch farmer settings & phone recipient
+    let settings = await tidb.getSettings();
+    if (!settings || !settings.notifications) settings = db.getSettings();
+    const phoneRecipient = settings?.notifications?.phoneRecipient || '+254712345678';
+    const crop = deviceConfig.crop || 'Tomato (Solanum lycopersicum)';
+
+    // 2. Synthesize AI Agronomy advice (Soil pH, fertilizer recommendation & optimal timing)
+    const report = await aiAgronomy.generatePostIrrigationAdvice({
+      crop,
+      cropStage: 'Vegetative Phase',
+      durationSeconds,
+      waterLiters,
+      soilPh,
+      soilMoisture: bridge.state.soilMoisture || 48.0,
+      temperature: bridge.state.temperature ?? null,
+      humidity: bridge.state.humidity ?? null
+    });
+
+    // 3. Persist irrigation event with pH & fertilizer prescription in TiDB Cloud & SQLite
+    await tidb.logIrrigation('PUMP_CYCLE_COMPLETE', 'AUTO_OR_MANUAL', 'HYDRATION_REACHED', zoneId, durationSeconds, waterLiters, soilPh, report.recommendation);
+    db.logIrrigation('PUMP_CYCLE_COMPLETE', 'AUTO_OR_MANUAL', 'HYDRATION_REACHED', zoneId, durationSeconds, waterLiters, soilPh, report.recommendation);
+
+    // 4. Record high-visibility alert for smartphone dashboard
+    const alertTitle = `💧 Irrigation Finished: ${waterLiters}L Used (Zone ${zoneId})`;
+    const alertMsg = `Time: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Water: ${waterLiters}L. Substrate pH: ${soilPh} (${report.irrigationSummary.phStatus}). Fertilizer Advice: ${report.recommendation.fertilizer} (${report.recommendation.timing}).`;
+
+    await tidb.logAlert('info', 'irrigation', alertTitle, alertMsg);
+    db.logAlert('info', 'irrigation', alertTitle, alertMsg);
+
+    // 5. Automatically dispatch SMS to farmer's phone (both smartphone and button/feature phone)
+    const smsResult = await ussd.dispatchPostIrrigationSms(report, phoneRecipient);
+    if (smsResult) {
+      await tidb.logSms(smsResult);
+      db.logSms(smsResult);
+    }
+
+    // 6. Broadcast real-time event to Web Dashboard & Mobile clients
+    io.emit('irrigation_completed', report);
+    io.emit('alert', {
+      type: 'info',
+      category: 'irrigation',
+      title: alertTitle,
+      message: alertMsg,
+      timestamp: Date.now()
+    });
+    io.emit('sms_dispatched', smsResult);
+  } catch (err) {
+    console.error('[Irrigation Post-Process Error]:', err);
+  }
 });
 
 // REST Endpoints & Railway Health Check
@@ -492,6 +553,107 @@ app.post(['/api/command', '/api/v1/commands'], async (req, res) => {
   db.logIrrigation(cmd, 'REST_API', 'MANUAL_TRIGGER', zoneId, duration);
   
   res.json({ success: true, cmd, state: bridge.state });
+});
+
+// ─── 4. USSD Gateway & Automated SMS Endpoints ───────────────────────────
+// POST /api/ussd - Africa's Talking / Telco Gateway Webhook
+app.post('/api/ussd', async (req, res) => {
+  try {
+    const { 
+      sessionId = `sess-${Date.now()}`, 
+      serviceCode = '*384*4744#', 
+      phoneNumber = '+254712345678', 
+      text = '' 
+    } = req.body;
+    
+    const ussdResponse = await ussd.handleUssdRequest({ sessionId, serviceCode, phoneNumber, text });
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(ussdResponse);
+  } catch (err) {
+    console.error('[USSD Gateway Error]:', err);
+    res.setHeader('Content-Type', 'text/plain');
+    res.send('END Huduma haipatikani kwa sasa. Jaribu tena baadaye.');
+  }
+});
+
+// POST /api/ussd/simulate - Interactive In-App USSD Phone Dial Simulator
+app.post('/api/ussd/simulate', async (req, res) => {
+  try {
+    const { 
+      sessionId = 'browser-sim-session', 
+      serviceCode = '*384*4744#', 
+      phoneNumber = '+254 712 345 678', 
+      text = '' 
+    } = req.body;
+
+    const rawResponse = await ussd.handleUssdRequest({ sessionId, serviceCode, phoneNumber, text });
+    const isContinue = rawResponse.startsWith('CON ');
+    const displayMenu = rawResponse.replace(/^(CON |END )/, '');
+
+    res.json({
+      status: isContinue ? 'CON' : 'END',
+      message: displayMenu,
+      raw: rawResponse,
+      phoneNumber,
+      serviceCode
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'USSD Simulation failed', details: err.message });
+  }
+});
+
+// GET /api/ussd/sms-logs - Fetch Outgoing SMS Notifications Log
+app.get('/api/ussd/sms-logs', async (req, res) => {
+  let logs = await tidb.getSmsLogs(50);
+  if (!logs || logs.length === 0) {
+    logs = db.getSmsLogs(50);
+  }
+  if (!logs || logs.length === 0) {
+    logs = ussd.getSmsLogs();
+  }
+  res.json({ smsLogs: logs || [] });
+});
+
+// ─── 5. AI Agronomy Advisory & Integration Endpoints ──────────────────────
+// POST /api/ai/advice - Trigger on-demand AI post-irrigation advisory
+app.post('/api/ai/advice', async (req, res) => {
+  try {
+    const { 
+      crop = deviceConfig.crop, 
+      cropStage = 'Vegetative Phase', 
+      durationSeconds = 180, 
+      waterLiters = 36.0, 
+      soilPh = bridge.state.soilPh ?? null, 
+      soilMoisture = bridge.state.soilMoisture || 48.0,
+      temperature = bridge.state.temperature || 27.5,
+      humidity = bridge.state.humidity || 65.0
+    } = req.body;
+
+    const advice = await aiAgronomy.generatePostIrrigationAdvice({
+      crop,
+      cropStage,
+      durationSeconds,
+      waterLiters,
+      soilPh,
+      soilMoisture,
+      temperature: Number(temperature),
+      humidity: Number(humidity)
+    });
+
+    res.json({ success: true, aiMode: advice.aiMode || 'rules', advice });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate AI agronomy advice', details: err.message });
+  }
+});
+
+// POST /api/ai/config - Set Gemini API Key or AI Model parameters
+app.post('/api/ai/config', (req, res) => {
+  const { apiKey } = req.body;
+  if (apiKey) {
+    aiAgronomy.setApiKey(apiKey);
+    return res.json({ success: true, message: 'Google Gemini API key successfully configured.' });
+  }
+  res.status(400).json({ error: 'Gemini API key is required' });
 });
 
 // SPA Fallback for client-side routing & unified frontend

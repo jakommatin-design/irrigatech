@@ -34,7 +34,8 @@ sqlite.exec(`
     zone1_moisture REAL,
     zone2_moisture REAL,
     zone3_moisture REAL,
-    zone4_moisture REAL
+    zone4_moisture REAL,
+    soil_ph REAL DEFAULT 6.2
   );
 
   CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry(timestamp);
@@ -48,10 +49,23 @@ sqlite.exec(`
     source TEXT DEFAULT 'ARDUINO_CORE',
     zone_id INTEGER DEFAULT 1,
     duration_seconds INTEGER DEFAULT 0,
-    water_liters REAL DEFAULT 0.0
+    water_liters REAL DEFAULT 0.0,
+    soil_ph REAL DEFAULT 6.2,
+    fertilizer_advice TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_irrigation_timestamp ON irrigation_events(timestamp);
+
+  CREATE TABLE IF NOT EXISTS sms_messages (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    iso_time TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'NOTIFICATION',
+    status TEXT DEFAULT 'DELIVERED',
+    gateway TEXT DEFAULT 'Simulated'
+  );
 
   CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,24 +181,29 @@ if (settingsCount === 0) {
   }), 'notifications', now);
 }
 
+// ─── Schema Migrations for New Columns ─────────────────────────────────────
+try { sqlite.exec(`ALTER TABLE irrigation_events ADD COLUMN soil_ph REAL DEFAULT 6.2;`); } catch (e) {}
+try { sqlite.exec(`ALTER TABLE irrigation_events ADD COLUMN fertilizer_advice TEXT;`); } catch (e) {}
+try { sqlite.exec(`ALTER TABLE telemetry ADD COLUMN soil_ph REAL DEFAULT 6.2;`); } catch (e) {}
+
 // ─── 3. Prepared Statements ────────────────────────────────────────────────
 const stmtInsertTelemetry = sqlite.prepare(`
   INSERT INTO telemetry (
     timestamp, iso_time, soil_moisture, temperature, humidity, light_lux,
     battery_voltage, battery_soc, solar_watts, water_tank, flow_rate,
-    pump, ac, shade_pct, zone1_moisture, zone2_moisture, zone3_moisture, zone4_moisture
+    pump, ac, shade_pct, zone1_moisture, zone2_moisture, zone3_moisture, zone4_moisture, soil_ph
   ) VALUES (
     @timestamp, @iso_time, @soil_moisture, @temperature, @humidity, @light_lux,
     @battery_voltage, @battery_soc, @solar_watts, @water_tank, @flow_rate,
-    @pump, @ac, @shade_pct, @zone1_moisture, @zone2_moisture, @zone3_moisture, @zone4_moisture
+    @pump, @ac, @shade_pct, @zone1_moisture, @zone2_moisture, @zone3_moisture, @zone4_moisture, @soil_ph
   )
 `);
 
 const stmtInsertIrrigation = sqlite.prepare(`
   INSERT INTO irrigation_events (
-    timestamp, iso_time, action, reason, source, zone_id, duration_seconds, water_liters
+    timestamp, iso_time, action, reason, source, zone_id, duration_seconds, water_liters, soil_ph, fertilizer_advice
   ) VALUES (
-    @timestamp, @iso_time, @action, @reason, @source, @zone_id, @duration_seconds, @water_liters
+    @timestamp, @iso_time, @action, @reason, @source, @zone_id, @duration_seconds, @water_liters, @soil_ph, @fertilizer_advice
   )
 `);
 
@@ -193,6 +212,14 @@ const stmtInsertAlert = sqlite.prepare(`
     timestamp, iso_time, type, category, title, message, acknowledged
   ) VALUES (
     @timestamp, @iso_time, @type, @category, @title, @message, 0
+  )
+`);
+
+const stmtInsertSms = sqlite.prepare(`
+  INSERT INTO sms_messages (
+    id, timestamp, iso_time, recipient, message, type, status, gateway
+  ) VALUES (
+    @id, @timestamp, @iso_time, @recipient, @message, @type, @status, @gateway
   )
 `);
 
@@ -208,6 +235,7 @@ export const db = {
       timestamp: ts,
       iso_time: new Date(ts).toISOString(),
       soil_moisture: reading.soilMoisture ?? zm.zone1 ?? 42.0,
+      soil_ph: reading.soilPh ?? 6.2,
       temperature: reading.temperature ?? 28.0,
       humidity: reading.humidity ?? 65.0,
       light_lux: reading.lightLux ?? 720.0,
@@ -230,9 +258,9 @@ export const db = {
   },
 
   /**
-   * Log irrigation start/stop event
+   * Log irrigation start/stop event with pH & fertilizer advice
    */
-  logIrrigation(action, source = 'AUTO', reason = 'SCHEDULE', zoneId = 1, duration = 0, waterLiters = 0.0) {
+  logIrrigation(action, source = 'AUTO', reason = 'SCHEDULE', zoneId = 1, duration = 0, waterLiters = 0.0, soilPh = 6.2, fertilizerAdvice = null) {
     const ts = Date.now();
     const entry = {
       timestamp: ts,
@@ -242,11 +270,35 @@ export const db = {
       source,
       zone_id: zoneId,
       duration_seconds: duration,
-      water_liters: waterLiters
+      water_liters: waterLiters,
+      soil_ph: soilPh,
+      fertilizer_advice: typeof fertilizerAdvice === 'object' ? JSON.stringify(fertilizerAdvice) : fertilizerAdvice
     };
 
     stmtInsertIrrigation.run(entry);
     return entry;
+  },
+
+  /**
+   * Log SMS message
+   */
+  logSms(sms) {
+    const entry = {
+      id: sms.id || `sms-${Date.now()}`,
+      timestamp: sms.timestamp || Date.now(),
+      iso_time: sms.isoTime || new Date().toISOString(),
+      recipient: sms.recipient || '+254712345678',
+      message: sms.message || '',
+      type: sms.type || 'NOTIFICATION',
+      status: sms.status || 'DELIVERED',
+      gateway: sms.gateway || 'Simulated'
+    };
+    stmtInsertSms.run(entry);
+    return entry;
+  },
+
+  getSmsLogs(limit = 50) {
+    return sqlite.prepare(`SELECT * FROM sms_messages ORDER BY timestamp DESC LIMIT ?`).all(limit);
   },
 
   /**

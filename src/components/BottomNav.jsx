@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Home, Activity, Droplets, Sprout, MoreHorizontal, 
-  Sun, Fan, Bell, BarChart2, Settings, Terminal, X
+  Sun, Fan, Bell, BarChart2, Settings, Terminal, Phone, X
 } from 'lucide-react';
 
 export default function BottomNav({ currentTab, setCurrentTab }) {
@@ -16,6 +16,7 @@ export default function BottomNav({ currentTab, setCurrentTab }) {
   ];
 
   const moreItems = [
+    { id: 'ussd', label: 'USSD (*384*4744#)', icon: Phone, color: '#059669', bg: '#ecfdf5' },
     { id: 'solar', label: 'Solar & Battery', icon: Sun, color: '#f59e0b', bg: '#fef3c7' },
     { id: 'climate', label: 'Climate Control', icon: Fan, color: '#0284c7', bg: '#e0f2fe' },
     { id: 'alerts', label: 'Alerts & Notifications', icon: Bell, color: '#dc2626', bg: '#fee2e2' },

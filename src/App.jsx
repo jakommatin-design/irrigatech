@@ -5,7 +5,7 @@ import Header from './components/Header';
 import DashboardView from './components/DashboardView';
 import MonitorView from './components/MonitorView';
 import IrrigationView from './components/IrrigationView';
-import NutritionView from './components/NutritionView';
+import AiAdviceView from './components/AiAdviceView';
 import SolarView from './components/SolarView';
 import ClimateControlView from './components/ClimateControlView';
 import AlertsView from './components/AlertsView';
@@ -16,6 +16,7 @@ import TerminalView from './components/TerminalView';
 import OpeningScreen from './components/OpeningScreen';
 import AuthModal from './components/AuthModal';
 import BottomNav from './components/BottomNav';
+import UssdSimulatorView from './components/UssdSimulatorView';
 
 function MainApp() {
   const [currentTab, setCurrentTab] = useState('home');
@@ -44,7 +45,8 @@ function MainApp() {
         {currentTab === 'home' && <DashboardView onNavigate={setCurrentTab} />}
         {currentTab === 'monitor' && <MonitorView />}
         {currentTab === 'irrigation' && <IrrigationView />}
-        {currentTab === 'nutrition' && <NutritionView />}
+        {currentTab === 'nutrition' && <AiAdviceView />}
+        {currentTab === 'ussd' && <UssdSimulatorView />}
         {currentTab === 'solar' && <SolarView />}
         {currentTab === 'climate' && <ClimateControlView />}
         {currentTab === 'alerts' && <AlertsView />}

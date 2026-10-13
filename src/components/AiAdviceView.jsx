@@ -1,125 +1,124 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { AlertCircle, CheckCircle2, Droplets, LoaderCircle, Sparkles, Sprout, Sun } from 'lucide-react';
 import { useSensors } from '../context/SensorContext';
-import { Sparkles, Sprout, AlertCircle, Droplets, Sun, CheckCircle } from 'lucide-react';
+
+const cardStyle = {
+  background: '#fff', border: '1px solid #e2e8f0', borderRadius: 18,
+  padding: '1.25rem', boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+};
 
 export default function AiAdviceView() {
-  const { temperature, humidity, soilMoisture } = useSensors();
+  const sensors = useSensors();
+  const { temperature, humidity, soilMoisture, connected, mode } = sensors;
+  const canRequest = connected || mode === 'demo';
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  // VPD calculation
-  // SVP = 0.61078 * exp((17.27 * T) / (T + 237.3))
-  // AVP = SVP * (RH / 100)
-  // VPD = SVP - AVP
-  const svp = 0.61078 * Math.exp((17.27 * temperature) / (temperature + 237.3));
-  const avp = svp * (humidity / 100);
-  const vpd = (svp - avp).toFixed(2);
+  const serverUrl = import.meta.env.VITE_SERVER_URL ||
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000' : window.location.origin);
 
-  const getVpdStatus = (val) => {
-    if (val < 0.4) return { label: 'Low Transpiration (High fungal risk)', color: '#0284c7', bg: '#f0f9ff' };
-    if (val >= 0.4 && val <= 1.25) return { label: 'Ideal Transpiration Zone', color: '#16a34a', bg: '#f0fdf4' };
-    return { label: 'High Plant Stress (Stomata closure)', color: '#dc2626', bg: '#fef2f2' };
-  };
+  async function getAdvice() {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`${serverUrl}/api/ai/advice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          crop: 'Tomato (Solanum lycopersicum)',
+          cropStage: 'Vegetative Phase',
+          soilMoisture: Number(soilMoisture),
+          soilPh: Number(sensors.soilPh || 6.2),
+          temperature: Number(temperature),
+          humidity: Number(humidity)
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not generate advice.');
+      setResult(data);
+    } catch (err) {
+      setError(`${err.message} Check that the Irriga-Tech server is running and reachable.`);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const vpdStatus = getVpdStatus(parseFloat(vpd));
+  const advice = result?.advice;
+  const vpd = temperature > -237.3
+    ? (0.61078 * Math.exp((17.27 * temperature) / (temperature + 237.3)) * (1 - humidity / 100)).toFixed(2)
+    : '—';
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto', padding: '1.5rem 1rem 5rem' }}>
-      
-      <div style={{ marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '1.5rem 1rem 5rem', display: 'grid', gap: '1rem' }}>
+      <header>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '.55rem' }}>
           <Sparkles size={22} color="#059669" />
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', margin: 0 }}>
-            AI Agronomy Advice
-          </h1>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>AI Agronomy Advice</h1>
         </div>
-        <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
-          Automated intelligence engine synthesizing greenhouse climate, soil hydration, and transpiration physics.
+        <p style={{ fontSize: '.88rem', color: '#64748b', margin: '.45rem 0 0' }}>
+          Generate a crop advisory from the latest greenhouse readings. AI advice is informational and never controls the pump.
         </p>
-      </div>
+      </header>
 
-      {/* VPD Highlight Card */}
-      <div style={{
-        background: 'linear-gradient(135deg, #064e3b 0%, #065f46 100%)',
-        borderRadius: '24px',
-        padding: '1.5rem',
-        color: '#ffffff',
-        marginBottom: '1.5rem',
-        boxShadow: '0 8px 24px rgba(6, 78, 59, 0.25)'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Vapor Pressure Deficit (VPD)
-            </div>
-            <div style={{ fontSize: '2.5rem', fontWeight: 800, margin: '0.2rem 0' }}>
-              {vpd} <span style={{ fontSize: '1.25rem', fontWeight: 500, color: '#a7f3d0' }}>kPa</span>
-            </div>
-            <div style={{ fontSize: '0.85rem', color: '#d1fae5' }}>
-              Current Status: <strong>{vpdStatus.label}</strong>
-            </div>
+      <section style={{ ...cardStyle, display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Current greenhouse readings</strong>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.1rem', marginTop: '.65rem', color: '#475569', fontSize: '.9rem' }}>
+            <span><Sun size={15} style={{ verticalAlign: 'middle' }} /> {temperature}°C</span>
+            <span>Humidity {humidity}%</span>
+            <span><Droplets size={15} style={{ verticalAlign: 'middle' }} /> Soil moisture {soilMoisture}%</span>
+            <span>🧪 Soil pH {sensors.soilPh || 6.2}</span>
+            <span>VPD {vpd} kPa</span>
           </div>
-
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.1)',
-            backdropFilter: 'blur(10px)',
-            borderRadius: '16px',
-            padding: '1rem',
-            maxWidth: '280px',
-            fontSize: '0.78rem',
-            lineHeight: 1.45,
-            border: '1px solid rgba(255, 255, 255, 0.2)'
-          }}>
-            Optimal target for tomato crops in vegetative phase is <strong>0.80 – 1.10 kPa</strong>. Stomata opening is balanced for nutrient uptake without water stress.
+          <div style={{ marginTop: '.55rem', color: '#64748b', fontSize: '.78rem' }}>
+            Data status: {connected ? 'Hardware connected' : mode === 'demo' ? 'Demo readings' : 'No hardware connected'}
           </div>
+          {mode === 'demo' && <div style={{ marginTop: '.35rem', color: '#92400e', fontSize: '.78rem' }}>These simulated readings are for demonstration only.</div>}
         </div>
-      </div>
+        <button onClick={getAdvice} disabled={loading || !canRequest} style={{ border: 0, borderRadius: 10, padding: '.75rem 1rem', background: loading || !canRequest ? '#94a3b8' : '#15803d', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+          {loading ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}
+          {loading ? 'Generating advice…' : canRequest ? 'Generate advice' : 'Connect hardware first'}
+        </button>
+      </section>
 
-      {/* Recommendations Feed */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        
-        {/* Recommendation 1 */}
-        <div style={{
-          background: '#ffffff',
-          borderRadius: '18px',
-          padding: '1.25rem',
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
-            <Droplets size={20} color="#0284c7" />
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
-              Hydration Cycle Recommendation
-            </h3>
+      {error && <div role="alert" style={{ ...cardStyle, color: '#b91c1c', background: '#fef2f2', display: 'flex', gap: '.6rem', alignItems: 'flex-start' }}><AlertCircle size={18} />{error}</div>}
+
+      {advice && <>
+        <section style={{ ...cardStyle, borderColor: result.aiMode === 'gemini' ? '#a7f3d0' : '#fde68a', background: result.aiMode === 'gemini' ? '#f0fdf4' : '#fffbeb' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontWeight: 800, color: '#0f172a' }}>
+            {result.aiMode === 'gemini' ? <CheckCircle2 size={18} color="#15803d" /> : <AlertCircle size={18} color="#b45309" />}
+            {result.aiMode === 'gemini' ? 'AI generated advisory (Gemini Engine)' : 'Rules based advisory (FAO-56 Offline Engine)'}
           </div>
-          <p style={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5, margin: 0 }}>
-            {soilMoisture > 70 
-              ? 'Soil dryness detected above 70%. Immediate 5-minute automated drip cycle recommended to prevent root moisture stress.'
-              : 'Current soil moisture levels are well-buffered. Next watering schedule estimated in approximately 3 hours based on current evapotranspiration rates.'}
+          {result.aiMode !== 'gemini' && <p style={{ color: '#92400e', fontSize: '.82rem', margin: '.5rem 0 0' }}>Gemini API key is optional. The built-in agronomy rules engine operates fully offline with instant response.</p>}
+          <div style={{ color: '#64748b', fontSize: '.78rem', marginTop: '.45rem' }}>For {advice.crop} · {advice.cropStage} · {new Date(advice.isoTime).toLocaleString()}</div>
+        </section>
+
+        <section style={cardStyle}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '1rem', margin: '0 0 .8rem', color: '#0f172a' }}><Droplets size={18} color="#0284c7" /> Post-Irrigation Water & Substrate Summary</h2>
+          <p style={{ margin: '0 0 .5rem', color: '#475569', lineHeight: 1.6 }}>
+            <strong>Water Delivered:</strong> {advice.irrigationSummary.waterLiters} Liters · <strong>Duration:</strong> {advice.irrigationSummary.durationMinutes} min · <strong>Soil Moisture:</strong> {advice.irrigationSummary.soilMoistureAfter}% · <strong>Substrate pH:</strong> {advice.irrigationSummary.soilPh} ({advice.irrigationSummary.phStatus})
           </p>
-        </div>
-
-        {/* Recommendation 2 */}
-        <div style={{
-          background: '#ffffff',
-          borderRadius: '18px',
-          padding: '1.25rem',
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
-            <Sun size={20} color="#d97706" />
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
-              Solar & Microclimate Optimization
-            </h3>
+          <div style={{ marginTop: '.65rem', padding: '.75rem', borderRadius: 12, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: '.82rem', color: '#166534', lineHeight: 1.45 }}>
+            <strong>📱 Automated SMS Dispatched to Farmer Phone:</strong><br />
+            {advice.smsMessageSw || advice.smsMessageEn}
           </div>
-          <p style={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5, margin: 0 }}>
-            {temperature > 30 
-              ? 'High canopy temperature observed. Activate ventilation fan (Pin 7) and deploy shade mesh to avoid leaf scorch.'
-              : 'Ambient temperature is within optimal vegetative growth range (20–30°C). Photosynthesis rates are optimized.'}
-          </p>
-        </div>
+        </section>
 
-      </div>
+        <section style={cardStyle}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '1rem', margin: '0 0 .8rem', color: '#0f172a' }}><Sprout size={18} color="#15803d" /> Recommendation</h2>
+          <p style={{ margin: '0 0 .5rem', color: '#334155', lineHeight: 1.6 }}><strong>Fertilizer:</strong> {advice.recommendation.fertilizer}</p>
+          <p style={{ margin: '0 0 .5rem', color: '#334155', lineHeight: 1.6 }}><strong>Dosage:</strong> {advice.recommendation.dosage}</p>
+          <p style={{ margin: '0 0 .5rem', color: '#334155', lineHeight: 1.6 }}><strong>Timing:</strong> {advice.recommendation.timing}</p>
+          <p style={{ margin: 0, color: '#475569', lineHeight: 1.6 }}>{advice.recommendation.scientificRationale}</p>
+          <div style={{ marginTop: '1rem', padding: '.75rem', borderRadius: 10, background: '#f8fafc', color: '#64748b', fontSize: '.8rem', lineHeight: 1.5 }}>
+            Confirm fertilizer and dosage against a soil or substrate test and local agronomist guidance before applying. Do not treat this advisory as a verified nutrient prescription.
+          </div>
+        </section>
+      </>}
 
+      {!advice && !error && <section style={{ ...cardStyle, color: '#64748b', textAlign: 'center' }}>Select “Generate advice” to request an advisory based on these readings.</section>}
     </div>
   );
 }
