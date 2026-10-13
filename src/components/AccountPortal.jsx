@@ -10,10 +10,33 @@ import {
 export default function AccountPortal() {
   const { 
     user, farms, users, switchFarm, switchCrop, logout,
+    deleteMyAccount,
     addFarm, updateFarm, deleteFarm,
     addUser, updateUser, deleteUser
   } = useAuth();
   const { setThreshold } = useSensors();
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteAccount = async () => {
+    const confirmed = window.confirm(
+      `⚠️ PERMANENT ACCOUNT DELETION\n\nAre you sure you want to permanently delete your account (${user?.email || 'this account'})?\n\nAll personal facilities, settings, and telemetry history will be removed from TiDB Cloud and SQLite.\n\nThis action CANNOT be undone.`
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      const res = await deleteMyAccount();
+      if (res && res.success) {
+        alert('Your account has been permanently deleted.');
+      } else {
+        alert(res?.error || 'Failed to delete account. Please try again.');
+      }
+    } catch (err) {
+      alert('Error connecting to deletion service.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Farm Modal State
   const [showFarmModal, setShowFarmModal] = useState(false);
@@ -227,15 +250,35 @@ export default function AccountPortal() {
                   gap: '0.35rem',
                   padding: '0.55rem 0.9rem',
                   borderRadius: '10px',
-                  background: '#fef2f2',
-                  color: '#dc2626',
-                  border: '1px solid #fecaca',
+                  background: '#f1f5f9',
+                  color: '#475569',
+                  border: '1px solid #cbd5e1',
                   fontSize: '0.78rem',
                   fontWeight: 700,
                   cursor: 'pointer'
                 }}
               >
                 <LogOut size={14} /> Sign Out
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={isDeleting}
+                title="Permanently Delete Account"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.55rem 0.9rem',
+                  borderRadius: '10px',
+                  background: '#fff1f2',
+                  color: '#be123c',
+                  border: '1px solid #fecdd3',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  cursor: isDeleting ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete Account'}
               </button>
             </div>
           </div>
@@ -887,6 +930,53 @@ export default function AccountPortal() {
           </div>
         </div>
       )}
+
+      {/* Danger Zone: Permanent Account Deletion */}
+      <div style={{
+        marginTop: '2.5rem',
+        background: '#fff1f2',
+        border: '1px solid #fecdd3',
+        borderRadius: '20px',
+        padding: '1.5rem',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '1rem'
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#9f1239' }}>
+              Danger Zone: Delete Account
+            </h4>
+          </div>
+          <p style={{ margin: '0.35rem 0 0', fontSize: '0.8rem', color: '#be123c', maxWidth: '520px' }}>
+            Permanently delete your agronomist account credentials, personal greenhouse data, and telemetry records from TiDB Cloud and SQLite.
+          </p>
+        </div>
+        <button
+          onClick={handleDeleteAccount}
+          disabled={isDeleting}
+          style={{
+            background: '#e11d48',
+            color: '#ffffff',
+            border: 'none',
+            padding: '0.65rem 1.25rem',
+            borderRadius: '12px',
+            fontSize: '0.82rem',
+            fontWeight: 800,
+            cursor: isDeleting ? 'not-allowed' : 'pointer',
+            boxShadow: '0 4px 12px rgba(225, 29, 72, 0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.45rem'
+          }}
+        >
+          <Trash2 size={15} />
+          {isDeleting ? 'Deleting Account...' : 'Permanently Delete Account'}
+        </button>
+      </div>
 
     </div>
   );

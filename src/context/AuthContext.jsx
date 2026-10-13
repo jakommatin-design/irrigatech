@@ -34,6 +34,18 @@ const defaultTeam = [
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
+export function isDemoAccount(user) {
+  if (!user) return false;
+  const demoEmails = [
+    'john@irrigatech.io',
+    'sarah@irrigatech.io',
+    'david@irrigatech.io',
+    'demo.farmer@irrigatech.io',
+    'francis@irriga-tech.farm'
+  ];
+  return demoEmails.includes(user.email?.toLowerCase()) || Boolean(user.is_demo);
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('irrigatech_user');
@@ -345,6 +357,36 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const deleteMyAccount = async () => {
+    const base = getApiUrl();
+    const token = localStorage.getItem('irrigatech_token');
+    try {
+      const res = await fetch(`${base}/api/auth/account`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to delete account' };
+      }
+    } catch (err) {
+      console.warn('API delete account error, continuing with local cleanup:', err);
+    }
+
+    localStorage.removeItem('irrigatech_token');
+    localStorage.removeItem('irrigatech_user');
+    localStorage.setItem('irrigatech_auth', 'false');
+    sessionStorage.removeItem('irrigatech_visited');
+    setUser(defaultUser);
+    setIsAuthenticated(false);
+    setShowSplash(true);
+    refreshData();
+    return { success: true };
+  };
+
   const logout = () => {
     localStorage.removeItem('irrigatech_token');
     localStorage.setItem('irrigatech_auth', 'false');
@@ -371,6 +413,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user,
       setUser,
+      isDemo: isDemoAccount(user),
       farms,
       users,
       settings,
@@ -387,6 +430,7 @@ export function AuthProvider({ children }) {
       login,
       register,
       logout,
+      deleteMyAccount,
       switchFarm,
       switchCrop,
       showAuthModal,

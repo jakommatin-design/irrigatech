@@ -10,11 +10,15 @@ export default function DashboardView({ onNavigate }) {
   const { 
     temperature, humidity, soilMoisture, lightLux,
     pump, ac, shadePct, waterTank, batterySoc, batteryVoltage, solarWatts,
+    connected, mode, isDemo,
     sendCommand
   } = useSensors();
 
+  const isRealInactive = !isDemo && !connected;
+
   // Status evaluators
   const getSoilStatus = (val) => {
+    if (isRealInactive) return { label: 'No Sensor Link', color: '#64748b', bg: '#f1f5f9', border: '#cbd5e1' };
     if (val > 70) return { label: 'Dry (Pumping)', color: '#dc2626', bg: '#fef2f2', border: '#fecaca' };
     if (val >= 35 && val <= 65) return { label: 'Optimal', color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' };
     return { label: 'Moist', color: '#0284c7', bg: '#f0f9ff', border: '#bae6fd' };
@@ -22,15 +26,15 @@ export default function DashboardView({ onNavigate }) {
 
   const soilStatus = getSoilStatus(soilMoisture);
 
-  // Formatted numeric values (clean formatting to avoid floating decimal artifacts)
-  const formattedWater = Math.round(Number(waterTank) || 0);
-  const formattedBattery = Number(batterySoc || 0).toFixed(1);
-  const formattedSolar = Math.round(Number(solarWatts) || 0);
-  const formattedTemp = Number(temperature || 0).toFixed(1);
-  const formattedHumidity = Math.round(Number(humidity) || 0);
-  const formattedSoil = Number(soilMoisture || 0).toFixed(1);
-  const formattedLux = Math.round(Number(lightLux) || 0);
-  const formattedVoltage = Number(batteryVoltage || 12.4).toFixed(1);
+  // Formatted numeric values (clean formatting, zero activity for real accounts without hardware)
+  const formattedWater = isRealInactive ? 0 : Math.round(Number(waterTank) || 0);
+  const formattedBattery = isRealInactive ? '0.0' : Number(batterySoc || 0).toFixed(1);
+  const formattedSolar = isRealInactive ? 0 : Math.round(Number(solarWatts) || 0);
+  const formattedTemp = isRealInactive ? '--' : Number(temperature || 0).toFixed(1);
+  const formattedHumidity = isRealInactive ? '--' : Math.round(Number(humidity) || 0);
+  const formattedSoil = isRealInactive ? '--' : Number(soilMoisture || 0).toFixed(1);
+  const formattedLux = isRealInactive ? 0 : Math.round(Number(lightLux) || 0);
+  const formattedVoltage = isRealInactive ? '0.0' : Number(batteryVoltage || 12.4).toFixed(1);
 
   return (
     <div className="dashboard-container">
@@ -121,6 +125,43 @@ export default function DashboardView({ onNavigate }) {
       {/* ─── VERTICALLY ARRANGED SECTIONS (Stacked neatly per div) ─── */}
       <div className="dashboard-vertical-layout">
         
+        {/* Real Hardware Offline Notice for Real User Accounts */}
+        {isRealInactive && (
+          <div style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '18px',
+            padding: '0.9rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#94a3b8' }} />
+              <div>
+                <strong style={{ fontSize: '0.85rem', color: '#1e293b' }}>Hardware Inactive • No Fake Mockup Data</strong>
+                <p style={{ margin: '0.15rem 0 0', fontSize: '0.76rem', color: '#64748b' }}>
+                  Real user mode active. All pumps, solar, and actuators are strictly OFF until physical ESP32 / Arduino sensor telemetry links.
+                </p>
+              </div>
+            </div>
+            <span style={{
+              fontSize: '0.7rem',
+              fontWeight: 800,
+              color: '#475569',
+              background: '#f1f5f9',
+              padding: '0.25rem 0.6rem',
+              borderRadius: '6px',
+              border: '1px solid #e2e8f0'
+            }}>
+              WAITING FOR SENSOR LINK
+            </span>
+          </div>
+        )}
+
         {/* ─── DIV 1: Hero Banner (Greenhouse 1) ─── */}
         <div style={{
           position: 'relative',
@@ -229,7 +270,7 @@ export default function DashboardView({ onNavigate }) {
               display: 'inline-flex',
               alignItems: 'center',
               gap: '0.5rem',
-              background: pump ? '#ef4444' : '#10b981',
+              background: isRealInactive ? '#475569' : pump ? '#ef4444' : '#10b981',
               padding: '0.45rem 1rem',
               borderRadius: '9999px',
               fontSize: '0.82rem',
@@ -241,9 +282,9 @@ export default function DashboardView({ onNavigate }) {
                 height: '8px', 
                 borderRadius: '50%', 
                 background: '#ffffff',
-                animation: pump ? 'pulseSlow 1.5s infinite' : 'none'
+                animation: (!isRealInactive && pump) ? 'pulseSlow 1.5s infinite' : 'none'
               }} />
-              {pump ? 'Pump Active' : 'System Normal'}
+              {isRealInactive ? 'Hardware Offline' : pump ? 'Pump Active' : 'System Normal'}
             </div>
           </div>
         </div>

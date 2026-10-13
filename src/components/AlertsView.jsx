@@ -6,6 +6,11 @@ import {
   Thermometer, CheckCircle2, Sprout, Info, 
   Filter, X
 } from 'lucide-react';
+import { 
+  getNotificationPermission, 
+  requestNotificationPermission, 
+  sendExternalNotification 
+} from '../utils/notifications';
 
 export default function AlertsView() {
   const { 
@@ -16,6 +21,27 @@ export default function AlertsView() {
 
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'warnings' | 'info'
   const [dbAlerts, setDbAlerts] = useState([]);
+  const [notifPerm, setNotifPerm] = useState(getNotificationPermission());
+
+  const handleRequestNotif = async () => {
+    const p = await requestNotificationPermission();
+    setNotifPerm(p);
+  };
+
+  const handleTestNotif = async () => {
+    if (notifPerm !== 'granted') {
+      const p = await requestNotificationPermission();
+      setNotifPerm(p);
+      if (p !== 'granted') {
+        alert('Please grant notification permissions in your browser to receive alerts outside the application.');
+        return;
+      }
+    }
+    sendExternalNotification('🌱 Irriga-Tech Live Greenhouse Alert', {
+      body: 'External OS alert test successful! You will receive critical alerts outside the app.',
+      tag: 'test-alert'
+    });
+  };
 
   // Fetch real alerts from backend
   useEffect(() => {
@@ -216,6 +242,96 @@ export default function AlertsView() {
               {warningCount}
             </span>
           )}
+        </div>
+      </div>
+
+      {/* External Desktop / OS Notifications Card */}
+      <div style={{
+        background: notifPerm === 'granted' ? '#f0fdf4' : '#f8fafc',
+        border: notifPerm === 'granted' ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+        borderRadius: '16px',
+        padding: '1rem 1.25rem',
+        marginBottom: '1.25rem',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '0.75rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{
+            width: '38px',
+            height: '38px',
+            borderRadius: '10px',
+            background: notifPerm === 'granted' ? '#dcfce7' : '#e2e8f0',
+            color: notifPerm === 'granted' ? '#15803d' : '#64748b',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            <Bell size={20} />
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#0f172a' }}>
+                Outside-App Desktop Notifications
+              </span>
+              <span style={{
+                fontSize: '0.68rem',
+                fontWeight: 700,
+                padding: '0.15rem 0.5rem',
+                borderRadius: '9999px',
+                background: notifPerm === 'granted' ? '#dcfce7' : notifPerm === 'denied' ? '#fee2e2' : '#fef3c7',
+                color: notifPerm === 'granted' ? '#15803d' : notifPerm === 'denied' ? '#dc2626' : '#d97706'
+              }}>
+                {notifPerm === 'granted' ? 'Active' : notifPerm === 'denied' ? 'Blocked' : 'Available'}
+              </span>
+            </div>
+            <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+              {notifPerm === 'granted' 
+                ? 'System alerts will pop up on your OS outside the browser when pumps trigger or thresholds breach.'
+                : 'Receive native OS alerts outside the browser even when minimized.'}
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {notifPerm !== 'granted' && (
+            <button
+              onClick={handleRequestNotif}
+              style={{
+                background: '#047857',
+                color: '#ffffff',
+                border: 'none',
+                padding: '0.55rem 0.95rem',
+                borderRadius: '10px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem'
+              }}
+            >
+              <Bell size={14} /> Enable OS Alerts
+            </button>
+          )}
+          <button
+            onClick={handleTestNotif}
+            style={{
+              background: '#ffffff',
+              color: '#334155',
+              border: '1px solid #cbd5e1',
+              padding: '0.55rem 0.95rem',
+              borderRadius: '10px',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            Send Test Alert
+          </button>
         </div>
       </div>
 

@@ -372,6 +372,34 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
+// DELETE /api/auth/account - Permanently delete current authenticated account
+app.delete('/api/auth/account', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Authentication token required' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    const userId = decoded.id;
+    if (!userId) {
+      return res.status(400).json({ error: 'Invalid user token' });
+    }
+
+    await tidb.deleteUser(userId);
+    db.deleteUser(userId);
+
+    io.emit('users_updated', { action: 'delete', id: userId });
+
+    return res.json({ success: true, message: 'Account permanently deleted' });
+  } catch (err) {
+    console.error('[Delete Account Error]:', err);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // ─── 2. Accounts & Users CRUD Endpoints ──────────────────────────────────
 // GET /api/users
 app.get(['/api/users', '/api/accounts'], async (req, res) => {

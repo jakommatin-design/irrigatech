@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react';
+import { useAuth, isDemoAccount } from './AuthContext';
+import { sendExternalNotification } from '../utils/notifications';
 
 // ─── Initial sensor state matching Blueprint Schema 7.2 ─────────────────────
 const initialState = {
@@ -48,6 +50,33 @@ const initialState = {
   ]
 };
 
+// ─── True Zero Inactive State for Real User Accounts with No Hardware Connected ─────
+const offlineState = {
+  temperature: 0,
+  humidity: 0,
+  soilMoisture: 0,
+  zoneMoisture: { zone1: 0, zone2: 0, zone3: 0, zone4: 0 },
+  lightLux: 0,
+  pump: false,
+  activeZone: 1,
+  ac: false,
+  led: false,
+  shadePct: 0,
+  waterTank: 0,
+  batterySoc: 0,
+  batteryVoltage: 0.0,
+  solarWatts: 0,
+  solarDailyKwh: 0.0,
+  uptime: 0,
+  flowRate: 0.0,
+  connected: false,
+  mode: 'offline',
+  currentReasonCode: 'NO_HARDWARE_CONNECTED',
+  thresholds: initialState.thresholds,
+  history: [],
+  irrigationLogs: []
+};
+
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 function reducer(state, action) {
   switch (action.type) {
@@ -71,6 +100,14 @@ function reducer(state, action) {
         flowRate: (payload.pump ?? state.pump) ? 1.4 : 0.0
       };
     }
+    case 'SET_HARDWARE_OFFLINE':
+      return {
+        ...state,
+        ...offlineState,
+        connected: false,
+        mode: 'offline',
+        currentReasonCode: 'NO_HARDWARE_CONNECTED'
+      };
     case 'SET_STATUS':
       return { ...state, connected: action.payload.connected, mode: action.payload.mode };
     case 'SET_ACTUATOR':
@@ -101,12 +138,56 @@ export const useSensors = () => useContext(SensorContext);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function SensorProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const { user } = useAuth() || {};
+  const isDemo = isDemoAccount(user);
+
+  const [state, dispatch] = useReducer(reducer, isDemo ? initialState : offlineState);
   const socketRef = useRef(null);
   const demoRef = useRef(null);
-  const demoState = useRef({ ...initialState });
+  const demoState = useRef({ ...(isDemo ? initialState : offlineState) });
+  const lastNotifRef = useRef({});
+
+  function notifyAlert(tag, title, body, critical = false) {
+    const now = Date.now();
+    if (lastNotifRef.current[tag] && now - lastNotifRef.current[tag] < 180000) {
+      return;
+    }
+    lastNotifRef.current[tag] = now;
+    sendExternalNotification(title, { body, tag, critical });
+  }
+
+  // System OS alerts dispatched outside the application
+  useEffect(() => {
+    if (state.connected || isDemo) {
+      if (state.temperature >= 32) {
+        notifyAlert('temp-high', '🌡️ High Temperature Alert', `Greenhouse temperature reached ${state.temperature}°C. Automated cooling activated.`, true);
+      }
+      if (state.waterTank > 0 && state.waterTank <= 20) {
+        notifyAlert('water-low', '💧 Critical Water Tank Level', `Water reserve is at ${state.waterTank}%. Automated pump cutoff imminent.`, true);
+      }
+      if (state.batterySoc > 0 && state.batterySoc <= 25) {
+        notifyAlert('battery-low', '🔋 Critical Battery Level', `Battery SOC dropped to ${state.batterySoc}%. Conservation mode activated.`, true);
+      }
+      if (state.soilMoisture > 0 && state.soilMoisture < (state.thresholds?.moistureStart || 35)) {
+        notifyAlert('moisture-low', '🌱 Crop Irrigation Warning', `Soil moisture at ${state.soilMoisture}%. Irrigation recommended.`, false);
+      }
+    }
+  }, [state.temperature, state.waterTank, state.batterySoc, state.soilMoisture, state.connected, isDemo]);
+
+  // Account switch sync
+  useEffect(() => {
+    if (!isDemo) {
+      stopDemo();
+      dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+    } else {
+      if (!socketRef.current?.connected) {
+        startDemo();
+      }
+    }
+  }, [isDemo]);
 
   function startDemo() {
+    if (!isDemo) return; // Never run false mockup data for real user accounts
     if (demoRef.current) return;
     dispatch({ type: 'SET_STATUS', payload: { connected: false, mode: 'demo' } });
     
@@ -190,7 +271,7 @@ export function SensorProvider({ children }) {
 
     if (socketRef.current?.connected) {
       socketRef.current.emit('command', { cmd, ...params });
-    } else {
+    } else if (isDemo) {
       if (cmd === 'PUMP_ON') {
         demoState.current.pump = true;
         demoState.current.led = true;
@@ -246,27 +327,59 @@ export function SensorProvider({ children }) {
 
         socket.on('connect', () => {
           stopDemo();
-          dispatch({ type: 'SET_STATUS', payload: { connected: true, mode: 'live' } });
+          if (isDemo) {
+            dispatch({ type: 'SET_STATUS', payload: { connected: true, mode: 'live' } });
+          }
         });
 
         socket.on('status', (stat) => {
-          dispatch({ type: 'SET_STATUS', payload: { connected: stat.connected, mode: stat.mode || 'live' } });
+          if (!isDemo) {
+            // Real account: only set live if real hardware board is physically connected
+            if (stat.connected && stat.mode === 'live') {
+              dispatch({ type: 'SET_STATUS', payload: { connected: true, mode: 'live' } });
+            } else {
+              dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+            }
+          } else {
+            dispatch({ type: 'SET_STATUS', payload: { connected: stat.connected, mode: stat.mode || 'live' } });
+          }
         });
 
         socket.on('telemetry', (data) => {
-          dispatch({ type: 'UPDATE_SENSORS', payload: { ...data, mode: 'live' } });
+          if (!isDemo) {
+            // Real account: strictly reject simulated mock telemetry
+            if (data.mode === 'live' || (data.simulated === false && data.connected !== false)) {
+              dispatch({ type: 'UPDATE_SENSORS', payload: { ...data, mode: 'live' } });
+            } else {
+              dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+            }
+          } else {
+            dispatch({ type: 'UPDATE_SENSORS', payload: { ...data, mode: 'live' } });
+          }
         });
 
         socket.on('disconnect', () => {
-          dispatch({ type: 'SET_STATUS', payload: { connected: false, mode: 'demo' } });
-          startDemo();
+          if (isDemo) {
+            dispatch({ type: 'SET_STATUS', payload: { connected: false, mode: 'demo' } });
+            startDemo();
+          } else {
+            dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+          }
         });
 
         socket.on('connect_error', () => {
-          if (!demoRef.current) startDemo();
+          if (isDemo && !demoRef.current) {
+            startDemo();
+          } else if (!isDemo) {
+            dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+          }
         });
       } catch {
-        startDemo();
+        if (isDemo) {
+          startDemo();
+        } else {
+          dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+        }
       }
     }
 
@@ -275,14 +388,15 @@ export function SensorProvider({ children }) {
       stopDemo();
       socketRef.current?.disconnect();
     };
-  }, []);
+  }, [isDemo]);
 
   return (
     <SensorContext.Provider value={{
       ...state,
       sendCommand,
       setThreshold,
-      setActiveZone
+      setActiveZone,
+      isDemo
     }}>
       {children}
     </SensorContext.Provider>
