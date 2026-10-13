@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSensors } from '../context/SensorContext';
 import { 
@@ -9,13 +9,21 @@ import {
 import AccountPortal from './AccountPortal';
 
 export default function SettingsView({ onNavigate }) {
-  const { user, logout, settings, updateSettings, farms } = useAuth();
+  const { user, logout, settings, updateSettings, farms, isAuthenticated } = useAuth();
   const { mode, connected, thresholds, setThreshold } = useSensors();
+  const canManageSettings = isAuthenticated && ['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(user?.role || '').toLowerCase());
 
   const [activeSubModal, setActiveSubModal] = useState(null); // 'account' | 'greenhouse' | 'devices' | 'cloud' | 'security' | 'preferences' | 'help' | null
   const [notificationsEnabled, setNotificationsEnabled] = useState(settings?.notifications?.emailAlerts ?? true);
   const [tempUnit, setTempUnit] = useState(settings?.general?.units?.includes('F') ? 'fahrenheit' : 'celsius');
   const [language, setLanguage] = useState(settings?.general?.language || 'English');
+  const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    setNotificationsEnabled(settings?.notifications?.emailAlerts ?? true);
+    setTempUnit(settings?.general?.units?.includes('F') ? 'fahrenheit' : 'celsius');
+    setLanguage(settings?.general?.language || 'English');
+  }, [settings]);
 
   const settingsItems = [
     {
@@ -41,9 +49,9 @@ export default function SettingsView({ onNavigate }) {
       icon: Cloud,
       iconBg: '#f0fdf4',
       iconColor: '#16a34a',
-      title: 'Firebase & Cloud',
+      title: 'Database & Sync',
       subtitle: 'Connection status, sync',
-      badge: 'Synchronized'
+      badge: 'TiDB / SQLite'
     },
     {
       id: 'security',
@@ -52,7 +60,7 @@ export default function SettingsView({ onNavigate }) {
       iconColor: '#dc2626',
       title: 'Security',
       subtitle: 'Authentication, permissions',
-      badge: '2FA Enabled'
+      badge: 'Password + JWT'
     },
     {
       id: 'preferences',
@@ -70,7 +78,7 @@ export default function SettingsView({ onNavigate }) {
       iconColor: '#9333ea',
       title: 'Help & Support',
       subtitle: 'FAQs, contact us',
-      badge: '24/7 Agro Support'
+      badge: 'Support details'
     }
   ];
 
@@ -318,11 +326,11 @@ export default function SettingsView({ onNavigate }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-              {/* Push notifications */}
+              {/* Email alert preference */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>Push Notifications</div>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Receive instant alerts for dry soil and frost</div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>Email Alerts</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Preference only; email delivery needs a configured email service.</div>
                 </div>
                 <input
                   type="checkbox"
@@ -380,19 +388,25 @@ export default function SettingsView({ onNavigate }) {
 
               <button
                 onClick={async () => {
-                  await updateSettings({
-                    general: {
-                      ...(settings?.general || {}),
-                      language,
-                      units: tempUnit === 'celsius' ? 'Metric (°C, L, bar)' : 'Imperial (°F, gal, psi)'
-                    },
-                    notifications: {
-                      ...(settings?.notifications || {}),
-                      emailAlerts: notificationsEnabled
-                    }
-                  });
-                  setActiveSubModal(null);
+                  setSaveError('');
+                  try {
+                    await updateSettings({
+                      general: {
+                        ...(settings?.general || {}),
+                        language,
+                        units: tempUnit === 'celsius' ? 'Metric (°C, L, bar)' : 'Imperial (°F, gal, psi)'
+                      },
+                      notifications: {
+                        ...(settings?.notifications || {}),
+                        emailAlerts: notificationsEnabled
+                      }
+                    });
+                    setActiveSubModal(null);
+                  } catch (err) {
+                    setSaveError(err.message || 'Could not save preferences.');
+                  }
                 }}
+                disabled={!canManageSettings}
                 style={{
                   marginTop: '0.5rem',
                   padding: '0.75rem',
@@ -406,6 +420,8 @@ export default function SettingsView({ onNavigate }) {
               >
                 Save Preferences
               </button>
+              {!canManageSettings && <p role="status" style={{ color: '#92400e', fontSize: '.78rem', margin: 0 }}>Sign in with a farm administrator account to save preferences.</p>}
+              {saveError && <p role="alert" style={{ color: '#b91c1c', fontSize: '.78rem', margin: 0 }}>{saveError}</p>}
             </div>
           </div>
         </div>
@@ -457,7 +473,7 @@ export default function SettingsView({ onNavigate }) {
               {activeSubModal === 'greenhouse' && (
                 <div>
                   <p><strong>Active Facility:</strong> {user?.activeFarm || 'Greenhouse 1 (Alpha)'}</p>
-                  <p><strong>Total Facilities:</strong> {farms?.length || 4} Managed Greenhouses</p>
+                  <p><strong>Total Facilities:</strong> {farms?.length || 0} Managed Greenhouses</p>
                   <p><strong>Active Crop:</strong> {user?.crops?.find(c => c.id === user?.selectedCrop)?.name || 'Tomato'}</p>
                   <button
                     onClick={() => { setActiveSubModal(null); onNavigate?.('account'); }}
@@ -480,18 +496,18 @@ export default function SettingsView({ onNavigate }) {
               )}
               {activeSubModal === 'cloud' && (
                 <div>
-                  <p><strong>Cloud Distributed SQL:</strong> TiDB Cloud Serverless (MySQL-Compatible)</p>
+                  <p><strong>Database:</strong> TiDB Cloud Serverless (MySQL-compatible) with SQLite fallback</p>
                   <p><strong>Cluster:</strong> gateway01.ap-northeast-1.prod.aws.tidbcloud.com</p>
                   <p><strong>Local Edge Database:</strong> SQLite3 (WAL Mode, zero-loss fallback)</p>
                   <p><strong>Production Host:</strong> Railway Production Container</p>
-                  <p><strong>Dual-Persistence:</strong> Active (Syncing all telemetry & irrigation events)</p>
+                  <p><strong>Connection status:</strong> Check the health endpoint for live TiDB status</p>
                 </div>
               )}
               {activeSubModal === 'security' && (
                 <div>
-                  <p><strong>Role:</strong> Administrator / Head Agronomist</p>
-                  <p><strong>Encryption:</strong> AES-256 local serial token verification</p>
-                  <p><strong>Audit Log:</strong> Autonomous fail-safe logging enabled</p>
+                  <p><strong>Role:</strong> {user?.role || 'Farm user'}</p>
+                  <p><strong>Authentication:</strong> Password sign-in with a signed bearer token</p>
+                  <p><strong>Two-factor authentication:</strong> Not configured</p>
                 </div>
               )}
               {activeSubModal === 'help' && (

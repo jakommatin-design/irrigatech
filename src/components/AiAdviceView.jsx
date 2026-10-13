@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, CheckCircle2, Droplets, LoaderCircle, Sparkles, Sprout, Sun } from 'lucide-react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
 
 const cardStyle = {
   background: '#fff', border: '1px solid #e2e8f0', borderRadius: 18,
@@ -9,8 +10,9 @@ const cardStyle = {
 
 export default function AiAdviceView() {
   const sensors = useSensors();
+  const { authHeaders, isAuthenticated } = useAuth();
   const { temperature, humidity, soilMoisture, connected, mode } = sensors;
-  const canRequest = connected || mode === 'demo';
+  const canRequest = isAuthenticated && (connected || mode === 'demo');
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -23,9 +25,9 @@ export default function AiAdviceView() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`${serverUrl}/api/ai/advice`, {
+  const response = await fetch(`${serverUrl}/api/ai/advice`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           crop: 'Tomato (Solanum lycopersicum)',
           cropStage: 'Vegetative Phase',

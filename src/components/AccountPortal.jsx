@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSensors } from '../context/SensorContext';
 import { 
@@ -10,16 +10,22 @@ import {
 export default function AccountPortal() {
   const { 
     user, farms, users, switchFarm, switchCrop, logout,
+    isAuthenticated,
     deleteMyAccount,
     addFarm, updateFarm, deleteFarm,
     addUser, updateUser, deleteUser
   } = useAuth();
   const { setThreshold } = useSensors();
+  const farmList = Array.isArray(farms) ? farms : [];
+  const teamMembers = Array.isArray(users) ? users : [];
+  const cropList = Array.isArray(user?.crops) ? user.crops : [];
+  const canManageAccounts = isAuthenticated && ['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(user?.role || '').toLowerCase());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const handleDeleteAccount = async () => {
     const confirmed = window.confirm(
-      `⚠️ PERMANENT ACCOUNT DELETION\n\nAre you sure you want to permanently delete your account (${user?.email || 'this account'})?\n\nAll personal facilities, settings, and telemetry history will be removed from TiDB Cloud and SQLite.\n\nThis action CANNOT be undone.`
+      `PERMANENT ACCOUNT DELETION\n\nDelete the sign-in account for ${user?.email || 'this account'}? Greenhouse and telemetry records are shared by the farm and will not be removed. This action cannot be undone.`
     );
     if (!confirmed) return;
 
@@ -27,7 +33,7 @@ export default function AccountPortal() {
     try {
       const res = await deleteMyAccount();
       if (res && res.success) {
-        alert('Your account has been permanently deleted.');
+        alert('Your sign-in account was deleted. Farm and telemetry records were retained.');
       } else {
         alert(res?.error || 'Failed to delete account. Please try again.');
       }
@@ -49,7 +55,7 @@ export default function AccountPortal() {
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [userForm, setUserForm] = useState({
-    name: '', email: '', role: 'Farm Operator', phone: '+254 700 000 000', avatar: '👨‍🌾'
+    name: '', email: '', role: 'Farm Operator', phone: '+254 700 000 000', avatar: '👨‍🌾', password: ''
   });
 
   // Profile Edit State
@@ -61,18 +67,21 @@ export default function AccountPortal() {
     role: user?.role || 'Chief Agronomist & Admin'
   });
 
-  const [copiedKey, setCopiedKey] = useState(false);
+  useEffect(() => {
+    setProfileForm({
+      name: user?.name || '',
+      email: user?.email || '',
+      phone: user?.phone || '',
+      role: user?.role || ''
+    });
+  }, [user]);
+
   const selectedCropObj = user?.crops?.find(c => c.id === user.selectedCrop) || (user?.crops ? user.crops[0] : null);
 
   const handleApplyCrop = (crop) => {
     switchCrop(crop.id);
     setThreshold('moistureStart', crop.moistureMin);
     setThreshold('moistureStop', crop.moistureMax);
-  };
-
-  const handleCopyKey = () => {
-    setCopiedKey(true);
-    setTimeout(() => setCopiedKey(false), 2000);
   };
 
   // ─── Farm Handlers ─────────────────────────────────────────────────────────
@@ -101,18 +110,21 @@ export default function AccountPortal() {
   const handleSaveFarm = async (e) => {
     e.preventDefault();
     if (!farmForm.name.trim()) return;
-    if (editingFarm) {
-      await updateFarm(editingFarm.id, farmForm);
-    } else {
-      await addFarm(farmForm);
+    setActionError('');
+    try {
+      if (editingFarm) await updateFarm(editingFarm.id, farmForm);
+      else await addFarm(farmForm);
+      setShowFarmModal(false);
+    } catch (err) {
+      setActionError(err.message);
     }
-    setShowFarmModal(false);
   };
 
   const handleDeleteFarm = async (id, name, e) => {
     e.stopPropagation();
     if (window.confirm(`Are you sure you want to delete ${name}?`)) {
-      await deleteFarm(id);
+      try { setActionError(''); await deleteFarm(id); }
+      catch (err) { setActionError(err.message); }
     }
   };
 
@@ -120,7 +132,7 @@ export default function AccountPortal() {
   const openNewUserModal = () => {
     setEditingUser(null);
     setUserForm({
-      name: '', email: '', role: 'Farm Operator', phone: '+254 700 000 000', avatar: '👨‍🌾'
+      name: '', email: '', role: 'Farm Operator', phone: '+254 700 000 000', avatar: '👨‍🌾', password: ''
     });
     setShowUserModal(true);
   };
@@ -132,7 +144,8 @@ export default function AccountPortal() {
       email: member.email,
       role: member.role || 'Farm Operator',
       phone: member.phone || '+254 700 000 000',
-      avatar: member.avatar || '👨‍🌾'
+      avatar: member.avatar || '👨‍🌾',
+      password: ''
     });
     setShowUserModal(true);
   };
@@ -140,24 +153,34 @@ export default function AccountPortal() {
   const handleSaveUser = async (e) => {
     e.preventDefault();
     if (!userForm.name.trim() || !userForm.email.trim()) return;
-    if (editingUser) {
-      await updateUser(editingUser.id, userForm);
-    } else {
-      await addUser(userForm);
+    if ((!editingUser && userForm.password.length < 8) || (editingUser && userForm.password && userForm.password.length < 8)) {
+      setActionError('Passwords must contain at least 8 characters.');
+      return;
     }
-    setShowUserModal(false);
+    setActionError('');
+    try {
+      if (editingUser) await updateUser(editingUser.id, userForm);
+      else await addUser(userForm);
+      setShowUserModal(false);
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
   const handleDeleteUser = async (id, name) => {
     if (window.confirm(`Remove team member ${name}?`)) {
-      await deleteUser(id);
+      try { setActionError(''); await deleteUser(id); }
+      catch (err) { setActionError(err.message); }
     }
   };
 
   const handleSaveProfile = async (e) => {
     e.preventDefault();
-    await updateUser(user.id || 'user-01', profileForm);
-    setIsEditingProfile(false);
+    setActionError('');
+    try {
+      await updateUser(user.id, profileForm);
+      setIsEditingProfile(false);
+    } catch (err) { setActionError(err.message); }
   };
 
   return (
@@ -172,6 +195,9 @@ export default function AccountPortal() {
           Production CRUD portal for multi-greenhouse facilities, agronomist accounts, and biological formulas.
         </p>
       </div>
+
+      {actionError && <div role="alert" style={{ marginBottom: '1rem', padding: '.75rem 1rem', borderRadius: 10, background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>{actionError}</div>}
+      {!isAuthenticated && <div role="status" style={{ marginBottom: '1rem', padding: '.75rem 1rem', borderRadius: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>Demo mode is read-only. Sign in to save profile, farm, and team-account changes.</div>}
 
       {/* User Profile Card */}
       <div style={{
@@ -225,7 +251,8 @@ export default function AccountPortal() {
 
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
-                onClick={() => setIsEditingProfile(true)}
+                onClick={() => isAuthenticated && setIsEditingProfile(true)}
+                disabled={!isAuthenticated}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -262,7 +289,7 @@ export default function AccountPortal() {
               </button>
               <button
                 onClick={handleDeleteAccount}
-                disabled={isDeleting}
+                disabled={isDeleting || !isAuthenticated}
                 title="Permanently Delete Account"
                 style={{
                   display: 'flex',
@@ -275,7 +302,8 @@ export default function AccountPortal() {
                   border: '1px solid #fecdd3',
                   fontSize: '0.78rem',
                   fontWeight: 700,
-                  cursor: isDeleting ? 'not-allowed' : 'pointer'
+                  cursor: isDeleting || !isAuthenticated ? 'not-allowed' : 'pointer',
+                  opacity: isAuthenticated ? 1 : .55
                 }}
               >
                 <Trash2 size={14} /> {isDeleting ? 'Deleting...' : 'Delete Account'}
@@ -319,13 +347,8 @@ export default function AccountPortal() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>Role</label>
-                <input
-                  type="text"
-                  value={profileForm.role}
-                  onChange={(e) => setProfileForm({ ...profileForm, role: e.target.value })}
-                  style={{ width: '100%', padding: '0.55rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
-                />
+                  <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>Role (managed by farm administrator)</label>
+                <input type="text" value={profileForm.role} readOnly aria-readonly="true" style={{ width: '100%', padding: '0.55rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', background: '#f8fafc' }} />
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
@@ -361,7 +384,7 @@ export default function AccountPortal() {
             <Building2 size={20} color="#0284c7" />
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                Greenhouse Facilities ({farms?.length || 0})
+                Greenhouse Facilities ({farmList.length})
               </h2>
               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
                 Active: <strong style={{ color: '#0284c7' }}>{user.activeFarm}</strong>
@@ -371,6 +394,7 @@ export default function AccountPortal() {
 
           <button
             onClick={openNewFarmModal}
+            disabled={!canManageAccounts}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -390,7 +414,7 @@ export default function AccountPortal() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {farms.map((farm) => {
+          {farmList.map((farm) => {
             const isActive = user.activeFarm === farm.name;
             return (
               <div
@@ -428,7 +452,8 @@ export default function AccountPortal() {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <button
-                    onClick={(e) => openEditFarmModal(farm, e)}
+                    onClick={(e) => canManageAccounts && openEditFarmModal(farm, e)}
+                    disabled={!canManageAccounts}
                     style={{
                       background: '#f8fafc',
                       border: '1px solid #e2e8f0',
@@ -446,7 +471,8 @@ export default function AccountPortal() {
                     <Edit2 size={13} /> Edit
                   </button>
                   <button
-                    onClick={(e) => handleDeleteFarm(farm.id, farm.name, e)}
+                    onClick={(e) => canManageAccounts && handleDeleteFarm(farm.id, farm.name, e)}
+                    disabled={!canManageAccounts}
                     style={{
                       background: '#fef2f2',
                       border: '1px solid #fecaca',
@@ -484,7 +510,7 @@ export default function AccountPortal() {
             <Users size={20} color="#16a34a" />
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                Team Members & Accounts ({users?.length || 0})
+                Team Members & Accounts ({teamMembers.length})
               </h2>
               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
                 Role-based access control for agricultural operations
@@ -494,6 +520,7 @@ export default function AccountPortal() {
 
           <button
             onClick={openNewUserModal}
+            disabled={!canManageAccounts}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -513,7 +540,7 @@ export default function AccountPortal() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.85rem' }}>
-          {users.map((member) => (
+          {teamMembers.map((member) => (
             <div
               key={member.id}
               style={{
@@ -537,14 +564,16 @@ export default function AccountPortal() {
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     <button
-                      onClick={() => openEditUserModal(member)}
+                      onClick={() => isAuthenticated && openEditUserModal(member)}
+                      disabled={!canManageAccounts}
                       style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '0.25rem 0.45rem', cursor: 'pointer' }}
                     >
                       <Edit2 size={12} color="#475569" />
                     </button>
                     {member.id !== user.id && (
                       <button
-                        onClick={() => handleDeleteUser(member.id, member.name)}
+                        onClick={() => isAuthenticated && handleDeleteUser(member.id, member.name)}
+                        disabled={!canManageAccounts}
                         style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '0.25rem 0.45rem', cursor: 'pointer' }}
                       >
                         <Trash2 size={12} color="#dc2626" />
@@ -606,7 +635,7 @@ export default function AccountPortal() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
-            {user.crops.map((crop) => {
+            {cropList.map((crop) => {
               const isCurrent = user.selectedCrop === crop.id;
               return (
                 <div
@@ -701,24 +730,24 @@ export default function AccountPortal() {
           <div>
             <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>DEVICE AUTHENTICATION TOKEN</div>
             <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: 700, color: '#0f172a', marginTop: '0.2rem' }}>
-              gh_live_9f82a17cb3490018d45ef209
+              Issued securely during device provisioning
             </div>
           </div>
 
           <button
-            onClick={handleCopyKey}
+            onClick={() => setActionError('Device credentials are not provisioned by this dashboard yet. Configure a unique device token on the controller and backend.')}
             style={{
               padding: '0.5rem 1rem',
               borderRadius: '8px',
-              background: copiedKey ? '#dcfce7' : '#ffffff',
-              color: copiedKey ? '#15803d' : '#334155',
+              background: '#ffffff',
+              color: '#334155',
               border: '1px solid #cbd5e1',
               fontSize: '0.75rem',
               fontWeight: 700,
               cursor: 'pointer'
             }}
           >
-            {copiedKey ? 'Copied ✓' : 'Copy API Key'}
+            Configure device token
           </button>
         </div>
       </div>
@@ -886,6 +915,19 @@ export default function AccountPortal() {
               </div>
 
               <div>
+                <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>{editingUser ? 'Reset Password (leave blank to keep current)' : 'Initial Password (at least 8 characters)'}</label>
+                <input
+                  type="password"
+                  required={!editingUser}
+                  minLength={editingUser ? undefined : 8}
+                  autoComplete="new-password"
+                  value={userForm.password}
+                  onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                  style={{ width: '100%', padding: '0.6rem', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              <div>
                 <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Role</label>
                 <select
                   value={userForm.role}
@@ -957,7 +999,7 @@ export default function AccountPortal() {
         </div>
         <button
           onClick={handleDeleteAccount}
-          disabled={isDeleting}
+          disabled={isDeleting || !isAuthenticated}
           style={{
             background: '#e11d48',
             color: '#ffffff',
@@ -966,7 +1008,8 @@ export default function AccountPortal() {
             borderRadius: '12px',
             fontSize: '0.82rem',
             fontWeight: 800,
-            cursor: isDeleting ? 'not-allowed' : 'pointer',
+            cursor: isDeleting || !isAuthenticated ? 'not-allowed' : 'pointer',
+            opacity: isAuthenticated ? 1 : .55,
             boxShadow: '0 4px 12px rgba(225, 29, 72, 0.25)',
             display: 'flex',
             alignItems: 'center',

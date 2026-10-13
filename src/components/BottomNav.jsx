@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Home, Activity, Droplets, Sprout, MoreHorizontal, 
-  Sun, Fan, Bell, BarChart2, Settings, Terminal, Phone, X
+  Sun, Fan, Bell, BarChart2, Settings, Terminal, Phone, X, Building2
 } from 'lucide-react';
 
 export default function BottomNav({ currentTab, setCurrentTab }) {
@@ -22,6 +22,7 @@ export default function BottomNav({ currentTab, setCurrentTab }) {
     { id: 'alerts', label: 'Alerts & Notifications', icon: Bell, color: '#dc2626', bg: '#fee2e2' },
     { id: 'analytics', label: 'Analytics & History', icon: BarChart2, color: '#16a34a', bg: '#dcfce7' },
     { id: 'settings', label: 'Settings', icon: Settings, color: '#64748b', bg: '#f1f5f9' },
+    { id: 'account', label: 'Farm & Accounts', icon: Building2, color: '#15803d', bg: '#dcfce7' },
     { id: 'terminal', label: 'Hardware Terminal', icon: Terminal, color: '#475569', bg: '#f1f5f9' },
   ];
 

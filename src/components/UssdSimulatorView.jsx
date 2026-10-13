@@ -5,9 +5,11 @@ import {
   BookOpen, HelpCircle, ChevronRight, AlertCircle, ArrowRight
 } from 'lucide-react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function UssdSimulatorView() {
   const { socket, pump, sendCommand } = useSensors();
+  const { getApiUrl, authHeaders } = useAuth();
 
   // USSD Interactive Phone State
   const [ussdInput, setUssdInput] = useState('*384*4744#');
@@ -27,7 +29,7 @@ export default function UssdSimulatorView() {
   const fetchSmsLogs = async () => {
     setRefreshingSms(true);
     try {
-      const res = await fetch('/api/ussd/sms-logs');
+      const res = await fetch(`${getApiUrl()}/api/ussd/sms-logs`, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         setSmsLogs(data.smsLogs || []);
@@ -68,9 +70,9 @@ export default function UssdSimulatorView() {
       const parts = sessionHistory.concat(textToSend ? [textToSend] : []);
       const payloadText = sessionActive ? parts.join('*') : '';
 
-      const res = await fetch('/api/ussd/simulate', {
+      const res = await fetch(`${getApiUrl()}/api/ussd/simulate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           sessionId: 'interactive-browser-session',
           serviceCode: '*384*4744#',
@@ -131,9 +133,9 @@ export default function UssdSimulatorView() {
   const handleTriggerSimulatedIrrigationDone = async () => {
     try {
       setLoading(true);
-      await fetch('/api/ai/advice', {
+      await fetch(`${getApiUrl()}/api/ai/advice`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           crop: 'Tomato (Solanum lycopersicum)',
           durationSeconds: 180,

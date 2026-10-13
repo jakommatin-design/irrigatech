@@ -80,6 +80,7 @@ sqlite.exec(`
 
   CREATE TABLE IF NOT EXISTS farms (
     id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL DEFAULT 'user-01',
     name TEXT NOT NULL,
     crop TEXT NOT NULL,
     location TEXT,
@@ -90,6 +91,7 @@ sqlite.exec(`
 
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL DEFAULT 'user-01',
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT,
@@ -120,6 +122,10 @@ try {
 } catch (e) {
   // column already exists
 }
+try { sqlite.exec(`ALTER TABLE users ADD COLUMN owner_id TEXT;`); } catch (e) {}
+try { sqlite.exec(`ALTER TABLE farms ADD COLUMN owner_id TEXT;`); } catch (e) {}
+sqlite.exec(`UPDATE users SET owner_id = 'user-01' WHERE owner_id IS NULL OR owner_id = '';`);
+sqlite.exec(`UPDATE farms SET owner_id = 'user-01' WHERE owner_id IS NULL OR owner_id = '';`);
 
 // ─── 2. Seed Default Data if empty ──────────────────────────────────────────
 const farmCount = sqlite.prepare('SELECT count(*) as cnt FROM farms').get().cnt;
@@ -138,8 +144,8 @@ if (farmCount === 0) {
 const userCount = sqlite.prepare('SELECT count(*) as cnt FROM users').get().cnt;
 if (userCount === 0) {
   const insertUser = sqlite.prepare(`
-    INSERT INTO users (id, name, email, role, phone, avatar, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, owner_id, name, email, role, phone, avatar, created_at, updated_at)
+    VALUES (?, 'user-01', ?, ?, ?, ?, ?, ?, ?)
   `);
   const now = Date.now();
   insertUser.run('user-01', 'Farmer John', 'john@irrigatech.io', 'Chief Agronomist & Admin', '+254 712 345 678', '👨‍🌾', now, now);
@@ -367,35 +373,44 @@ export const db = {
     return query.all(limit);
   },
 
+  deleteAlert(id) {
+    return sqlite.prepare('DELETE FROM alerts WHERE id = ?').run(id).changes > 0;
+  },
+
+  deleteAlerts() {
+    return sqlite.prepare('DELETE FROM alerts').run().changes;
+  },
+
   /**
    * Retrieve all registered farms
    */
-  getFarms() {
-    return sqlite.prepare('SELECT * FROM farms').all();
+  getFarms(ownerId = 'user-01') {
+    return sqlite.prepare('SELECT * FROM farms WHERE owner_id = ?').all(ownerId);
   },
 
-  getFarmById(id) {
-    return sqlite.prepare('SELECT * FROM farms WHERE id = ?').get(id);
+  getFarmById(id, ownerId = 'user-01') {
+    return sqlite.prepare('SELECT * FROM farms WHERE id = ? AND owner_id = ?').get(id, ownerId);
   },
 
   createFarm(farm) {
     const id = farm.id || `farm-${Date.now()}`;
     sqlite.prepare(`
-      INSERT INTO farms (id, name, crop, location, moisture_min, moisture_max, target_vpd)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO farms (id, owner_id, name, crop, location, moisture_min, moisture_max, target_vpd)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
+      farm.owner_id || 'user-01',
       farm.name || 'New Greenhouse',
       farm.crop || 'Tomato',
       farm.location || 'Local Cluster',
-      farm.moisture_min || 35.0,
-      farm.moisture_max || 50.0,
-      farm.target_vpd || 0.85
+      farm.moisture_min ?? 35.0,
+      farm.moisture_max ?? 50.0,
+      farm.target_vpd ?? 0.85
     );
-    return this.getFarmById(id);
+    return this.getFarmById(id, farm.owner_id || 'user-01');
   },
 
-  updateFarm(id, farm) {
+  updateFarm(id, farm, ownerId = 'user-01') {
     sqlite.prepare(`
       UPDATE farms SET
         name = COALESCE(?, name),
@@ -404,7 +419,7 @@ export const db = {
         moisture_min = COALESCE(?, moisture_min),
         moisture_max = COALESCE(?, moisture_max),
         target_vpd = COALESCE(?, target_vpd)
-      WHERE id = ?
+      WHERE id = ? AND owner_id = ?
     `).run(
       farm.name,
       farm.crop,
@@ -412,19 +427,20 @@ export const db = {
       farm.moisture_min,
       farm.moisture_max,
       farm.target_vpd,
-      id
+      id,
+      ownerId
     );
-    return this.getFarmById(id);
+    return this.getFarmById(id, ownerId);
   },
 
-  deleteFarm(id) {
-    const result = sqlite.prepare('DELETE FROM farms WHERE id = ?').run(id);
+  deleteFarm(id, ownerId = 'user-01') {
+    const result = sqlite.prepare('DELETE FROM farms WHERE id = ? AND owner_id = ?').run(id, ownerId);
     return result.changes > 0;
   },
 
   // ─── Users / Accounts CRUD ───────────────────────────────────────────────
-  getUsers() {
-    return sqlite.prepare('SELECT * FROM users ORDER BY created_at ASC').all();
+  getUsers(ownerId = 'user-01') {
+    return sqlite.prepare('SELECT * FROM users WHERE owner_id = ? ORDER BY created_at ASC').all(ownerId);
   },
 
   getUserById(id) {
@@ -440,10 +456,11 @@ export const db = {
     const id = user.id || `user-${Date.now()}`;
     const now = Date.now();
     sqlite.prepare(`
-      INSERT INTO users (id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, owner_id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
+      user.owner_id || user.id || id,
       user.name || 'Farmer',
       user.email ? user.email.trim().toLowerCase() : `${id}@irrigatech.io`,
       user.password_hash || null,
@@ -481,6 +498,7 @@ export const db = {
       UPDATE users SET
         name = COALESCE(?, name),
         email = COALESCE(?, email),
+        password_hash = COALESCE(?, password_hash),
         role = COALESCE(?, role),
         phone = COALESCE(?, phone),
         avatar = COALESCE(?, avatar),
@@ -489,6 +507,7 @@ export const db = {
     `).run(
       user.name,
       user.email,
+      user.password_hash,
       user.role,
       user.phone,
       user.avatar,
@@ -504,14 +523,18 @@ export const db = {
   },
 
   // ─── Settings CRUD ───────────────────────────────────────────────────────
-  getSettings() {
-    const rows = sqlite.prepare('SELECT * FROM settings').all();
+  getSettings(ownerId = 'user-01') {
+    const prefix = `${ownerId}:`;
+    const rows = ownerId === 'user-01'
+      ? sqlite.prepare("SELECT * FROM settings WHERE instr(key, ':') = 0").all()
+      : sqlite.prepare('SELECT * FROM settings WHERE key LIKE ?').all(`${prefix}%`);
     const result = {};
     for (const r of rows) {
+      const key = ownerId === 'user-01' ? r.key : r.key.slice(prefix.length);
       try {
-        result[r.key] = JSON.parse(r.value);
+        result[key] = JSON.parse(r.value);
       } catch (e) {
-        result[r.key] = r.value;
+        result[key] = r.value;
       }
     }
     return result;
@@ -541,11 +564,11 @@ export const db = {
     return this.getSetting(key);
   },
 
-  updateSettingsBatch(settingsObj) {
+  updateSettingsBatch(settingsObj, ownerId = 'user-01') {
     for (const [key, val] of Object.entries(settingsObj)) {
-      this.updateSetting(key, val);
+      this.updateSetting(ownerId === 'user-01' ? key : `${ownerId}:${key}`, val);
     }
-    return this.getSettings();
+    return this.getSettings(ownerId);
   },
 
   /**

@@ -138,7 +138,7 @@ export const useSensors = () => useContext(SensorContext);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function SensorProvider({ children }) {
-  const { user } = useAuth() || {};
+  const { user, isAuthenticated } = useAuth() || {};
   const isDemo = isDemoAccount(user);
 
   const [state, dispatch] = useReducer(reducer, isDemo ? initialState : offlineState);
@@ -315,10 +315,17 @@ export function SensorProvider({ children }) {
         : 'http://localhost:3000');
 
     async function tryConnect() {
+      const token = localStorage.getItem('irrigatech_token') || sessionStorage.getItem('irrigatech_token');
+      if (!token) {
+        if (isDemo) startDemo();
+        else dispatch({ type: 'SET_HARDWARE_OFFLINE' });
+        return;
+      }
       try {
         const { io } = await import('socket.io-client');
         const socket = io(SERVER, { 
           transports: ['websocket', 'polling'], 
+          auth: token ? { token } : {},
           timeout: 4000, 
           reconnectionAttempts: 10,
           reconnectionDelay: 2000
@@ -388,7 +395,7 @@ export function SensorProvider({ children }) {
       stopDemo();
       socketRef.current?.disconnect();
     };
-  }, [isDemo]);
+  }, [isDemo, isAuthenticated]);
 
   return (
     <SensorContext.Provider value={{

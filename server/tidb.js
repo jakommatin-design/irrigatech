@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env.local') });
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const DB_CONFIG = {
@@ -155,6 +156,7 @@ export async function initTiDB() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS farms (
         id VARCHAR(64) PRIMARY KEY,
+        owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01',
         name VARCHAR(128) NOT NULL,
         crop VARCHAR(128) NOT NULL,
         location VARCHAR(128),
@@ -167,6 +169,7 @@ export async function initTiDB() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(64) PRIMARY KEY,
+        owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01',
         name VARCHAR(128) NOT NULL,
         email VARCHAR(128) NOT NULL,
         password_hash VARCHAR(255) NULL,
@@ -184,6 +187,8 @@ export async function initTiDB() {
     } catch (e) {
       // Column already exists or table freshly created
     }
+    try { await pool.query(`ALTER TABLE farms ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01'`); } catch (e) {}
+    try { await pool.query(`ALTER TABLE users ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT 'user-01'`); } catch (e) {}
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -402,11 +407,33 @@ export const tidb = {
     }
   },
 
+  async deleteAlert(id) {
+    if (!pool || !isConnected) return false;
+    try {
+      const [result] = await pool.query('DELETE FROM alerts WHERE id = ?', [id]);
+      return result.affectedRows > 0;
+    } catch (err) {
+      handleQueryError(err, 'deleteAlert');
+      return false;
+    }
+  },
+
+  async deleteAlerts() {
+    if (!pool || !isConnected) return 0;
+    try {
+      const [result] = await pool.query('DELETE FROM alerts');
+      return result.affectedRows || 0;
+    } catch (err) {
+      handleQueryError(err, 'deleteAlerts');
+      return 0;
+    }
+  },
+
   // ─── Farms CRUD ─────────────────────────────────────────────────────────
-  async getFarms() {
+  async getFarms(ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
-      const [rows] = await pool.query('SELECT * FROM farms');
+      const [rows] = await pool.query('SELECT * FROM farms WHERE owner_id = ?', [ownerId]);
       return rows;
     } catch (err) {
       handleQueryError(err, 'getFarms');
@@ -414,10 +441,10 @@ export const tidb = {
     }
   },
 
-  async getFarmById(id) {
+  async getFarmById(id, ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
-      const [rows] = await pool.query('SELECT * FROM farms WHERE id = ?', [id]);
+      const [rows] = await pool.query('SELECT * FROM farms WHERE id = ? AND owner_id = ?', [id, ownerId]);
       return rows[0] || null;
     } catch (err) {
       handleQueryError(err, 'getFarmById');
@@ -430,25 +457,26 @@ export const tidb = {
     const id = farm.id || `farm-${Date.now()}`;
     try {
       await pool.query(`
-        INSERT INTO farms (id, name, crop, location, moisture_min, moisture_max, target_vpd)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO farms (id, owner_id, name, crop, location, moisture_min, moisture_max, target_vpd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         id,
+        farm.owner_id || 'user-01',
         farm.name || 'New Greenhouse',
         farm.crop || 'Tomato',
         farm.location || 'Local Cluster',
-        farm.moisture_min || 35.0,
-        farm.moisture_max || 50.0,
-        farm.target_vpd || 0.85
+        farm.moisture_min ?? 35.0,
+        farm.moisture_max ?? 50.0,
+        farm.target_vpd ?? 0.85
       ]);
-      return this.getFarmById(id);
+      return this.getFarmById(id, farm.owner_id || 'user-01');
     } catch (err) {
       handleQueryError(err, 'createFarm');
       return null;
     }
   },
 
-  async updateFarm(id, farm) {
+  async updateFarm(id, farm, ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
       await pool.query(`
@@ -459,7 +487,7 @@ export const tidb = {
           moisture_min = COALESCE(?, moisture_min),
           moisture_max = COALESCE(?, moisture_max),
           target_vpd = COALESCE(?, target_vpd)
-        WHERE id = ?
+        WHERE id = ? AND owner_id = ?
       `, [
         farm.name,
         farm.crop,
@@ -467,19 +495,20 @@ export const tidb = {
         farm.moisture_min,
         farm.moisture_max,
         farm.target_vpd,
-        id
+        id,
+        ownerId
       ]);
-      return this.getFarmById(id);
+      return this.getFarmById(id, ownerId);
     } catch (err) {
       handleQueryError(err, 'updateFarm');
       return null;
     }
   },
 
-  async deleteFarm(id) {
+  async deleteFarm(id, ownerId = 'user-01') {
     if (!pool || !isConnected) return false;
     try {
-      const [result] = await pool.query('DELETE FROM farms WHERE id = ?', [id]);
+      const [result] = await pool.query('DELETE FROM farms WHERE id = ? AND owner_id = ?', [id, ownerId]);
       return result.affectedRows > 0;
     } catch (err) {
       handleQueryError(err, 'deleteFarm');
@@ -488,10 +517,10 @@ export const tidb = {
   },
 
   // ─── Users / Accounts CRUD ───────────────────────────────────────────────
-  async getUsers() {
+  async getUsers(ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
-      const [rows] = await pool.query('SELECT * FROM users ORDER BY created_at ASC');
+      const [rows] = await pool.query('SELECT * FROM users WHERE owner_id = ? ORDER BY created_at ASC', [ownerId]);
       return rows;
     } catch (err) {
       handleQueryError(err, 'getUsers');
@@ -527,10 +556,11 @@ export const tidb = {
     const now = Date.now();
     try {
       await pool.query(`
-        INSERT INTO users (id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (id, owner_id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         id,
+        user.owner_id || user.id || id,
         user.name || 'Farmer',
         user.email ? user.email.trim().toLowerCase() : `${id}@irrigatech.io`,
         user.password_hash || null,
@@ -580,6 +610,7 @@ export const tidb = {
         UPDATE users SET
           name = COALESCE(?, name),
           email = COALESCE(?, email),
+          password_hash = COALESCE(?, password_hash),
           role = COALESCE(?, role),
           phone = COALESCE(?, phone),
           avatar = COALESCE(?, avatar),
@@ -588,6 +619,7 @@ export const tidb = {
       `, [
         user.name,
         user.email,
+        user.password_hash,
         user.role,
         user.phone,
         user.avatar,
@@ -613,16 +645,19 @@ export const tidb = {
   },
 
   // ─── Settings CRUD ───────────────────────────────────────────────────────
-  async getSettings() {
+  async getSettings(ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     try {
-      const [rows] = await pool.query('SELECT * FROM settings');
+      const [rows] = ownerId === 'user-01'
+        ? await pool.query("SELECT * FROM settings WHERE `key` NOT LIKE '%:%'")
+        : await pool.query('SELECT * FROM settings WHERE `key` LIKE ?', [`${ownerId}:%`]);
       const result = {};
       for (const r of rows) {
+        const key = ownerId === 'user-01' ? r.key : r.key.slice(`${ownerId}:`.length);
         try {
-          result[r.key] = JSON.parse(r.value);
+          result[key] = JSON.parse(r.value);
         } catch {
-          result[r.key] = r.value;
+          result[key] = r.value;
         }
       }
       return result;
@@ -668,12 +703,12 @@ export const tidb = {
     }
   },
 
-  async updateSettingsBatch(settingsObj) {
+  async updateSettingsBatch(settingsObj, ownerId = 'user-01') {
     if (!pool || !isConnected) return null;
     for (const [key, val] of Object.entries(settingsObj)) {
-      await this.updateSetting(key, val);
+      await this.updateSetting(ownerId === 'user-01' ? key : `${ownerId}:${key}`, val);
     }
-    return this.getSettings();
+    return this.getSettings(ownerId);
   },
 
   async getWeeklyStats() {

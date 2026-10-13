@@ -21,7 +21,9 @@ export class UssdService {
     // Load credentials from environment
     this.atUsername = process.env.AT_USERNAME || 'sandbox';
     this.atApiKey = process.env.AT_API_KEY || null;
-    this.atSenderId = process.env.AT_SENDER_ID || 'IRRIGATECH';
+    // Africa's Talking sender IDs must be enabled for the account. Omit `from`
+    // until an approved sender ID is configured instead of guessing one.
+    this.atSenderId = process.env.AT_SENDER_ID || null;
   }
 
   setLastIrrigationReport(report) {
@@ -281,15 +283,16 @@ export class UssdService {
    * Send SMS via Africa's Talking API or Local Gateway Simulator
    */
   async sendSms({ to, message, type = 'NOTIFICATION', metadata = {} }) {
+    const destination = String(to || '').replace(/[\s()-]/g, '');
     const smsRecord = {
       id: `sms-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       timestamp: Date.now(),
       isoTime: new Date().toISOString(),
-      recipient: to || '+254712345678',
+      recipient: destination || '+254712345678',
       message,
       type,
       metadata,
-      status: 'DELIVERED',
+      status: this.atApiKey ? 'PENDING' : 'SIMULATED',
       gateway: this.atApiKey ? 'AfricasTalking' : 'SimulatedGSMGateway'
     };
 
@@ -298,7 +301,7 @@ export class UssdService {
       try {
         const formData = new URLSearchParams();
         formData.append('username', this.atUsername);
-        formData.append('to', to);
+        formData.append('to', destination || '+254712345678');
         formData.append('message', message);
         if (this.atSenderId) formData.append('from', this.atSenderId);
 
@@ -312,11 +315,20 @@ export class UssdService {
           body: formData.toString()
         });
 
-        if (atRes.ok) {
-          smsRecord.status = 'SENT_VIA_TELCO';
+        const result = await atRes.json().catch(() => null);
+        const recipients = result?.SMSMessageData?.Recipients || [];
+        const recipient = recipients.find(item => String(item.number || '').replace(/[\s()-]/g, '') === (destination || '+254712345678')) || recipients[0];
+        if (atRes.ok && recipient && [100, 101, 102].includes(Number(recipient.statusCode))) {
+          smsRecord.status = Number(recipient.statusCode) === 102 ? 'QUEUED' : Number(recipient.statusCode) === 100 ? 'PROCESSING' : 'SENT_VIA_TELCO';
+          smsRecord.gatewayMessage = recipient.status || 'Accepted by Africa\'s Talking';
+        } else {
+          smsRecord.status = 'FAILED';
+          smsRecord.gatewayMessage = recipient?.status || result?.SMSMessageData?.Message || `Africa's Talking returned HTTP ${atRes.status}`;
         }
       } catch (err) {
         console.warn('[SMS Gateway] Live carrier dispatch warning:', err.message);
+        smsRecord.status = 'FAILED';
+        smsRecord.gatewayMessage = 'Could not reach Africa\'s Talking.';
       }
     }
 

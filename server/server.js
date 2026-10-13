@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -15,7 +15,10 @@ import { aiAgronomy } from './ai-service.js';
 import { UssdService } from './ussd-service.js';
 import { weatherService } from './weather-service.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'irrigatech-jwt-secret-key-2026';
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured in production.');
+}
+const JWT_SECRET = process.env.JWT_SECRET || 'irrigatech-development-only-secret';
 
 function sanitizeUser(user) {
   if (!user) return null;
@@ -23,8 +26,43 @@ function sanitizeUser(user) {
   return safeUser;
 }
 
+async function authenticateToken(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Authentication token required' });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const currentUser = db.getUserById(decoded.id) || await tidb.getUserById(decoded.id);
+    if (!currentUser) return res.status(401).json({ error: 'Account is no longer active' });
+    req.auth = { ...decoded, role: currentUser.role, ownerId: currentUser.owner_id || decoded.ownerId || currentUser.id };
+    return next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired authentication token' });
+  }
+}
+
+function requireFarmAdmin(req, res, next) {
+  const role = String(req.auth?.role || '').toLowerCase();
+  if (!['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(role)) {
+    return res.status(403).json({ error: 'Farm administrator permission required' });
+  }
+  return next();
+}
+
+function validFarm(farm) {
+  const min = Number(farm.moisture_min ?? 35);
+  const max = Number(farm.moisture_max ?? 50);
+  const vpd = Number(farm.target_vpd ?? 0.85);
+  return Boolean(String(farm.name || '').trim() && String(farm.crop || '').trim())
+    && Number.isFinite(min) && Number.isFinite(max) && min >= 0 && max <= 100 && min <= max
+    && Number.isFinite(vpd) && vpd >= 0 && vpd <= 10;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// Local secrets live in .env.local; platform environment variables take precedence.
+dotenv.config({ path: path.join(__dirname, '.env.local') });
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 // Detect built React frontend distribution
 const distCandidates = [
@@ -40,6 +78,22 @@ const io = new Server(server, {
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
+  }
+});
+
+// Telemetry may be public to read, but actuator commands require a signed-in operator.
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('Authentication required'));
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const currentUser = db.getUserById(decoded.id) || await tidb.getUserById(decoded.id);
+    if (!currentUser) return next(new Error('Account is no longer active'));
+    socket.data.auth = { ...decoded, role: currentUser.role, ownerId: currentUser.owner_id || decoded.ownerId || currentUser.id };
+    socket.join(`owner:${socket.data.auth.ownerId}`);
+    return next();
+  } catch {
+    return next(new Error('Invalid or expired authentication token'));
   }
 });
 
@@ -93,6 +147,15 @@ io.on('connection', (socket) => {
   socket.emit('device_config', deviceConfig);
 
   socket.on('command', async (data) => {
+    const role = String(socket.data.auth?.role || '').toLowerCase();
+    if (!['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin', 'farm operator', 'irrigation engineer'].includes(role)) {
+      socket.emit('command_error', { error: 'Operator permission required' });
+      return;
+    }
+    if (!data || typeof data.cmd !== 'string' || !/^(PUMP_ON|PUMP_OFF|AC_ON|AC_OFF|LED_ON|LED_OFF|SET_SHADE)$/.test(data.cmd)) {
+      socket.emit('command_error', { error: 'Unsupported command' });
+      return;
+    }
     console.log('[Socket.io] Received command:', data);
     const { cmd, zoneId = 1, duration = 300 } = data;
     bridge.sendCommand(cmd);
@@ -232,7 +295,7 @@ app.get(['/api/logs', '/api/v1/events'], async (req, res) => {
 });
 
 // GET /api/alerts
-app.get('/api/alerts', async (req, res) => {
+app.get('/api/alerts', authenticateToken, async (req, res) => {
   let alerts = await tidb.getAlerts(50);
   if (!alerts || alerts.length === 0) {
     alerts = db.getAlerts(50);
@@ -242,50 +305,59 @@ app.get('/api/alerts', async (req, res) => {
 
 // ─── 1. Farms CRUD Endpoints ─────────────────────────────────────────────
 // GET /api/farms
-app.get('/api/farms', async (req, res) => {
-  let farms = await tidb.getFarms();
+app.get('/api/farms', authenticateToken, async (req, res) => {
+  const ownerId = req.auth.ownerId || req.auth.id;
+  let farms = await tidb.getFarms(ownerId);
   if (!farms || farms.length === 0) {
-    farms = db.getFarms();
+    farms = db.getFarms(ownerId);
   }
   res.json({ farms });
 });
 
 // GET /api/farms/:id
-app.get('/api/farms/:id', async (req, res) => {
-  let farm = await tidb.getFarmById(req.params.id);
-  if (!farm) farm = db.getFarmById(req.params.id);
+app.get('/api/farms/:id', authenticateToken, async (req, res) => {
+  const ownerId = req.auth.ownerId || req.auth.id;
+  let farm = await tidb.getFarmById(req.params.id, ownerId);
+  if (!farm) farm = db.getFarmById(req.params.id, ownerId);
   if (!farm) return res.status(404).json({ error: 'Farm not found' });
   res.json({ farm });
 });
 
 // POST /api/farms
-app.post('/api/farms', async (req, res) => {
-  const farmData = req.body;
-  if (!farmData.name) return res.status(400).json({ error: 'Farm name is required' });
+app.post('/api/farms', authenticateToken, requireFarmAdmin, async (req, res) => {
+  const farmData = { ...req.body, owner_id: req.auth.ownerId || req.auth.id };
+  if (!validFarm(farmData)) return res.status(400).json({ error: 'Provide a farm name and crop, valid 0–100 moisture thresholds, and a non-negative VPD target.' });
   let created = await tidb.createFarm(farmData);
   const localCreated = db.createFarm(farmData);
   if (!created) created = localCreated;
-  io.emit('farms_updated', { action: 'create', farm: created });
+  io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('farms_updated', { action: 'create', farm: created });
   res.status(201).json({ farm: created });
 });
 
 // PUT /api/farms/:id
-app.put('/api/farms/:id', async (req, res) => {
+app.put('/api/farms/:id', authenticateToken, requireFarmAdmin, async (req, res) => {
   const { id } = req.params;
+  const ownerId = req.auth.ownerId || req.auth.id;
+  const existing = await tidb.getFarmById(id, ownerId) || db.getFarmById(id, ownerId);
+  if (!existing) return res.status(404).json({ error: 'Farm not found' });
   const farmData = req.body;
-  let updated = await tidb.updateFarm(id, farmData);
-  const localUpdated = db.updateFarm(id, farmData);
+  if (!validFarm({ ...existing, ...farmData })) return res.status(400).json({ error: 'Provide valid farm details and moisture thresholds.' });
+  let updated = await tidb.updateFarm(id, farmData, ownerId);
+  const localUpdated = db.updateFarm(id, farmData, ownerId);
   if (!updated) updated = localUpdated;
-  io.emit('farms_updated', { action: 'update', farm: updated });
+  io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('farms_updated', { action: 'update', farm: updated });
   res.json({ farm: updated });
 });
 
 // DELETE /api/farms/:id
-app.delete('/api/farms/:id', async (req, res) => {
+app.delete('/api/farms/:id', authenticateToken, requireFarmAdmin, async (req, res) => {
   const { id } = req.params;
-  await tidb.deleteFarm(id);
-  db.deleteFarm(id);
-  io.emit('farms_updated', { action: 'delete', id });
+  const ownerId = req.auth.ownerId || req.auth.id;
+  const existing = await tidb.getFarmById(id, ownerId) || db.getFarmById(id, ownerId);
+  if (!existing) return res.status(404).json({ error: 'Farm not found' });
+  await tidb.deleteFarm(id, ownerId);
+  db.deleteFarm(id, ownerId);
+  io.to(`owner:${ownerId}`).emit('farms_updated', { action: 'delete', id });
   res.json({ success: true, id });
 });
 
@@ -297,8 +369,8 @@ app.post('/api/auth/register', async (req, res) => {
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Full name, email, and password are required' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -315,6 +387,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     const userPayload = {
       id: userId,
+      owner_id: userId,
       name: name.trim(),
       email: cleanEmail,
       password_hash: passwordHash,
@@ -332,6 +405,7 @@ app.post('/api/auth/register', async (req, res) => {
     if (farmName && farmName.trim()) {
       const farmPayload = {
         id: `farm-${Date.now()}`,
+        owner_id: userId,
         name: farmName.trim(),
         crop: 'Tomato (Vegetative Phase)',
         location: 'Automated Facility',
@@ -341,16 +415,16 @@ app.post('/api/auth/register', async (req, res) => {
       };
       createdFarm = await tidb.createFarm(farmPayload);
       if (!createdFarm) createdFarm = db.createFarm(farmPayload);
-      io.emit('farms_updated', { action: 'create', farm: createdFarm });
+      io.to(`owner:${userId}`).emit('farms_updated', { action: 'create', farm: createdFarm });
     }
 
     const token = jwt.sign(
-      { id: createdUser.id, email: createdUser.email, role: createdUser.role, name: createdUser.name },
+      { id: createdUser.id, ownerId: createdUser.owner_id || createdUser.id, email: createdUser.email, role: createdUser.role, name: createdUser.name },
       JWT_SECRET,
       { expiresIn: '30d' }
     );
 
-    io.emit('users_updated', { action: 'create', user: sanitizeUser(createdUser) });
+    io.to(`owner:${userId}`).emit('users_updated', { action: 'create', user: sanitizeUser(createdUser) });
 
     return res.status(201).json({
       success: true,
@@ -380,21 +454,12 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    if (user.password_hash) {
-      const isMatch = await bcrypt.compare(password, user.password_hash);
-      if (!isMatch) {
-        return res.status(401).json({ error: 'Invalid email or password' });
-      }
-    } else {
-      // Seed user with no initial password hash: store password hash on first successful sign in
-      const passwordHash = await bcrypt.hash(password, 10);
-      try {
-        db.updateUser(user.id, { password_hash: passwordHash });
-      } catch (e) {}
+    if (!user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role, name: user.name },
+      { id: user.id, ownerId: user.owner_id || user.id, email: user.email, role: user.role, name: user.name },
       JWT_SECRET,
       { expiresIn: '30d' }
     );
@@ -435,17 +500,9 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 // DELETE /api/auth/account - Permanently delete current authenticated account
-app.delete('/api/auth/account', async (req, res) => {
+app.delete('/api/auth/account', authenticateToken, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Authentication token required' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    const userId = decoded.id;
+    const userId = req.auth.id;
     if (!userId) {
       return res.status(400).json({ error: 'Invalid user token' });
     }
@@ -453,7 +510,7 @@ app.delete('/api/auth/account', async (req, res) => {
     await tidb.deleteUser(userId);
     db.deleteUser(userId);
 
-    io.emit('users_updated', { action: 'delete', id: userId });
+    io.to(`owner:${req.auth.ownerId || userId}`).emit('users_updated', { action: 'delete', id: userId });
 
     return res.json({ success: true, message: 'Account permanently deleted' });
   } catch (err) {
@@ -464,79 +521,117 @@ app.delete('/api/auth/account', async (req, res) => {
 
 // ─── 2. Accounts & Users CRUD Endpoints ──────────────────────────────────
 // GET /api/users
-app.get(['/api/users', '/api/accounts'], async (req, res) => {
-  let users = await tidb.getUsers();
+app.get(['/api/users', '/api/accounts'], authenticateToken, requireFarmAdmin, async (req, res) => {
+  const ownerId = req.auth.ownerId || req.auth.id;
+  let users = await tidb.getUsers(ownerId);
   if (!users || users.length === 0) {
-    users = db.getUsers();
+    users = db.getUsers(ownerId);
   }
   res.json({ users: (users || []).map(sanitizeUser) });
 });
 
 // GET /api/users/:id
-app.get(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+app.get(['/api/users/:id', '/api/accounts/:id'], authenticateToken, async (req, res) => {
+  if (req.params.id !== req.auth.id && !['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(req.auth.role || '').toLowerCase())) {
+    return res.status(403).json({ error: 'You can only view your own account' });
+  }
   let user = await tidb.getUserById(req.params.id);
   if (!user) user = db.getUserById(req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user || user.owner_id !== (req.auth.ownerId || req.auth.id)) return res.status(404).json({ error: 'Account not found' });
   res.json({ user: sanitizeUser(user) });
 });
 
 // POST /api/users
-app.post(['/api/users', '/api/accounts'], async (req, res) => {
+app.post(['/api/users', '/api/accounts'], authenticateToken, requireFarmAdmin, async (req, res) => {
   const userData = req.body;
-  if (!userData.name || !userData.email) {
-    return res.status(400).json({ error: 'Name and email are required' });
+  if (!userData.name || !userData.email || !userData.password) {
+    return res.status(400).json({ error: 'Name, email, and an initial password are required' });
   }
-  let created = await tidb.createUser(userData);
-  const localCreated = db.createUser(userData);
+  const email = String(userData.email).trim().toLowerCase();
+  if (String(userData.password).length < 8) return res.status(400).json({ error: 'Initial password must be at least 8 characters' });
+  if (await tidb.getUserByEmail(email) || db.getUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
+  const userPayload = {
+    ...userData,
+    id: undefined,
+    owner_id: req.auth.ownerId || req.auth.id,
+    email,
+    password_hash: await bcrypt.hash(String(userData.password), 10)
+  };
+  delete userPayload.password;
+  let created = await tidb.createUserWithAuth(userPayload);
+  const localCreated = db.createUserWithAuth(userPayload);
   if (!created) created = localCreated;
-  io.emit('users_updated', { action: 'create', user: created });
-  res.status(201).json({ user: created });
+  const safeCreated = sanitizeUser(created);
+  io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('users_updated', { action: 'create', user: safeCreated });
+  res.status(201).json({ user: safeCreated });
 });
 
 // PUT /api/users/:id
-app.put(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+app.put(['/api/users/:id', '/api/accounts/:id'], authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const userData = req.body;
+  const targetUser = await tidb.getUserById(id) || db.getUserById(id);
+  if (!targetUser || targetUser.owner_id !== (req.auth.ownerId || req.auth.id)) return res.status(404).json({ error: 'Account not found' });
+  const isSelf = id === req.auth.id;
+  const isAdmin = ['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin'].includes(String(req.auth.role || '').toLowerCase());
+  if (!isSelf && !isAdmin) return res.status(403).json({ error: 'Farm administrator permission required' });
+  const userData = isSelf
+    ? { name: req.body.name, email: req.body.email, phone: req.body.phone, avatar: req.body.avatar }
+    : { name: req.body.name, email: req.body.email, phone: req.body.phone, avatar: req.body.avatar, role: req.body.role };
+  if (userData.email) {
+    userData.email = String(userData.email).trim().toLowerCase();
+    const existing = await tidb.getUserByEmail(userData.email) || db.getUserByEmail(userData.email);
+    if (existing && existing.id !== id) return res.status(409).json({ error: 'An account with this email already exists' });
+  }
+  if (req.body.password) {
+    if (String(req.body.password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    userData.password_hash = await bcrypt.hash(String(req.body.password), 10);
+  }
   let updated = await tidb.updateUser(id, userData);
   const localUpdated = db.updateUser(id, userData);
   if (!updated) updated = localUpdated;
-  io.emit('users_updated', { action: 'update', user: updated });
-  res.json({ user: updated });
+  if (!updated) return res.status(404).json({ error: 'Account not found' });
+  io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('users_updated', { action: 'update', user: sanitizeUser(updated) });
+  res.json({ user: sanitizeUser(updated) });
 });
 
 // DELETE /api/users/:id
-app.delete(['/api/users/:id', '/api/accounts/:id'], async (req, res) => {
+app.delete(['/api/users/:id', '/api/accounts/:id'], authenticateToken, requireFarmAdmin, async (req, res) => {
   const { id } = req.params;
+  if (id === req.auth.id) return res.status(400).json({ error: 'Use account deletion to remove your own account' });
+  const targetUser = await tidb.getUserById(id) || db.getUserById(id);
+  if (!targetUser || targetUser.owner_id !== (req.auth.ownerId || req.auth.id)) return res.status(404).json({ error: 'Account not found' });
   await tidb.deleteUser(id);
   db.deleteUser(id);
-  io.emit('users_updated', { action: 'delete', id });
+  io.to(`owner:${req.auth.ownerId || req.auth.id}`).emit('users_updated', { action: 'delete', id });
   res.json({ success: true, id });
 });
 
 // ─── 3. Settings CRUD Endpoints ──────────────────────────────────────────
 // GET /api/settings
-app.get('/api/settings', async (req, res) => {
-  let settings = await tidb.getSettings();
+app.get('/api/settings', authenticateToken, async (req, res) => {
+  const ownerId = req.auth.ownerId || req.auth.id;
+  let settings = await tidb.getSettings(ownerId);
   if (!settings || Object.keys(settings).length === 0) {
-    settings = db.getSettings();
+    settings = db.getSettings(ownerId);
   }
   res.json({ settings });
 });
 
 // PUT /api/settings
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', authenticateToken, requireFarmAdmin, async (req, res) => {
   const settingsData = req.body;
   if (!settingsData || typeof settingsData !== 'object') {
     return res.status(400).json({ error: 'Invalid settings payload' });
   }
-  await tidb.updateSettingsBatch(settingsData);
-  const localSettings = db.updateSettingsBatch(settingsData);
-  io.emit('settings_updated', localSettings);
+  const ownerId = req.auth.ownerId || req.auth.id;
+  await tidb.updateSettingsBatch(settingsData, ownerId);
+  const localSettings = db.updateSettingsBatch(settingsData, ownerId);
+  io.to(`owner:${ownerId}`).emit('settings_updated', localSettings);
   res.json({ success: true, settings: localSettings });
 });
 
 // GET /api/stats/weekly
-app.get('/api/stats/weekly', async (req, res) => {
+app.get('/api/stats/weekly', authenticateToken, async (req, res) => {
   let stats = await tidb.getWeeklyStats();
   if (!stats || stats.length === 0) {
     stats = db.getWeeklyStats();
@@ -545,9 +640,17 @@ app.get('/api/stats/weekly', async (req, res) => {
 });
 
 // POST /api/command
-app.post(['/api/command', '/api/v1/commands'], async (req, res) => {
+app.post(['/api/command', '/api/v1/commands'], authenticateToken, (req, res, next) => {
+  const role = String(req.auth?.role || '').toLowerCase();
+  if (!['farm owner & operator', 'chief agronomist & admin', 'chief agronomist', 'admin', 'farm operator', 'irrigation engineer'].includes(role)) {
+    return res.status(403).json({ error: 'Operator permission required' });
+  }
+  return next();
+}, async (req, res) => {
   const { cmd, zoneId = 1, duration = 300 } = req.body;
-  if (!cmd) return res.status(400).json({ error: 'Command missing' });
+  if (typeof cmd !== 'string' || !/^(PUMP_ON|PUMP_OFF|AC_ON|AC_OFF|LED_ON|LED_OFF|SET_SHADE)$/.test(cmd)) {
+    return res.status(400).json({ error: 'Unsupported command' });
+  }
   bridge.sendCommand(cmd);
   
   await tidb.logIrrigation(cmd, 'REST_API', 'MANUAL_TRIGGER', zoneId, duration);
@@ -578,7 +681,7 @@ app.post('/api/ussd', async (req, res) => {
 });
 
 // POST /api/ussd/simulate - Interactive In-App USSD Phone Dial Simulator
-app.post('/api/ussd/simulate', async (req, res) => {
+app.post('/api/ussd/simulate', authenticateToken, async (req, res) => {
   try {
     const { 
       sessionId = 'browser-sim-session', 
@@ -604,7 +707,7 @@ app.post('/api/ussd/simulate', async (req, res) => {
 });
 
 // GET /api/ussd/sms-logs - Fetch Outgoing SMS Notifications Log
-app.get('/api/ussd/sms-logs', async (req, res) => {
+app.get('/api/ussd/sms-logs', authenticateToken, async (req, res) => {
   let logs = await tidb.getSmsLogs(50);
   if (!logs || logs.length === 0) {
     logs = db.getSmsLogs(50);
@@ -617,7 +720,7 @@ app.get('/api/ussd/sms-logs', async (req, res) => {
 
 // ─── 5. AI Agronomy Advisory & Integration Endpoints ──────────────────────
 // POST /api/ai/advice - Trigger on-demand AI post-irrigation advisory
-app.post('/api/ai/advice', async (req, res) => {
+app.post('/api/ai/advice', authenticateToken, async (req, res) => {
   try {
     const { 
       crop = deviceConfig.crop, 
@@ -661,7 +764,7 @@ app.get('/api/weather', async (req, res) => {
 });
 
 // POST /api/ai/config - Set Gemini API Key or AI Model parameters
-app.post('/api/ai/config', (req, res) => {
+app.post('/api/ai/config', authenticateToken, requireFarmAdmin, (req, res) => {
   const { apiKey } = req.body;
   if (apiKey) {
     aiAgronomy.setApiKey(apiKey);

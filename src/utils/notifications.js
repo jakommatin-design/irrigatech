@@ -1,6 +1,8 @@
 // System-level OS / Browser Notifications outside the application
 export const isNotificationSupported = () => {
-  return typeof window !== 'undefined' && 'Notification' in window;
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  const localDevelopment = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  return window.isSecureContext || localDevelopment;
 };
 
 export const getNotificationPermission = () => {
@@ -13,8 +15,9 @@ export const requestNotificationPermission = async () => {
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      sendExternalNotification('🌱 Irriga-Tech Alerts Enabled', {
-        body: 'You will now receive real-time greenhouse alerts outside the browser even when minimized.',
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+      await sendExternalNotification('🌱 Irriga-Tech Alerts Enabled', {
+        body: 'System alerts are enabled while this site is open or running in the background.',
         tag: 'irrigatech-welcome'
       });
     }
@@ -26,21 +29,35 @@ export const requestNotificationPermission = async () => {
 };
 
 // Send native notification visible outside the application on Desktop / Mobile OS
-export const sendExternalNotification = (title, options = {}) => {
+export const sendExternalNotification = async (title, options = {}) => {
   if (!isNotificationSupported() || Notification.permission !== 'granted') {
     return null;
   }
 
   try {
-    const notif = new Notification(title, {
+    const notificationOptions = {
       body: options.body || '',
-      icon: '/assets/site_logo.jpeg',
-      badge: '/assets/site_logo.jpeg',
+      icon: '/site_logo.jpeg',
+      badge: '/site_logo.jpeg',
       tag: options.tag || `irrigatech-${Date.now()}`,
       renotify: true,
       requireInteraction: options.critical || false,
       ...options
-    });
+    };
+
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.getRegistration('/') || await navigator.serviceWorker.register('/sw.js');
+        if (registration?.showNotification) {
+          await registration.showNotification(title, notificationOptions);
+          return true;
+        }
+      } catch (err) {
+        console.warn('Service worker notification failed; using browser notification fallback:', err);
+      }
+    }
+
+    const notif = new Notification(title, notificationOptions);
 
     notif.onclick = () => {
       if (typeof window !== 'undefined') {
@@ -49,9 +66,9 @@ export const sendExternalNotification = (title, options = {}) => {
       notif.close();
     };
 
-    return notif;
+    return true;
   } catch (err) {
     console.warn('Failed to dispatch external notification:', err);
-    return null;
+    return false;
   }
 };

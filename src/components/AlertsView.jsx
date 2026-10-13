@@ -2,9 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useSensors } from '../context/SensorContext';
 import { useAuth } from '../context/AuthContext';
 import { 
-  Bell, AlertTriangle, Battery, Droplets, 
-  Thermometer, CheckCircle2, Sprout, Info, 
-  Filter, X
+  Bell, Battery, Droplets, Thermometer, CheckCircle2, Trash2, X
 } from 'lucide-react';
 import { 
   getNotificationPermission, 
@@ -15,17 +13,32 @@ import {
 export default function AlertsView() {
   const { 
     temperature, humidity, soilMoisture, waterTank, batterySoc,
-    irrigationLogs
+    irrigationLogs, connected, mode
   } = useSensors();
-  const { getApiUrl } = useAuth() || {};
+  const { getApiUrl, authHeaders, user } = useAuth() || {};
+  const dismissedStorageKey = `irrigatech_dismissed_alerts:${user?.id || 'demo'}`;
 
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'warnings' | 'info'
   const [dbAlerts, setDbAlerts] = useState([]);
   const [notifPerm, setNotifPerm] = useState(getNotificationPermission());
+  const [dismissedIds, setDismissedIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(dismissedStorageKey) || '[]'); } catch { return []; }
+  });
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    try { setDismissedIds(JSON.parse(localStorage.getItem(dismissedStorageKey) || '[]')); }
+    catch { setDismissedIds([]); }
+  }, [dismissedStorageKey]);
 
   const handleRequestNotif = async () => {
     const p = await requestNotificationPermission();
     setNotifPerm(p);
+    setNotice(p === 'granted'
+      ? 'OS alerts are enabled for this browser. A test notification should appear now.'
+      : p === 'denied'
+        ? 'Permission was blocked. Allow notifications for this site in browser settings, then reload.'
+        : 'OS notifications need a supported browser and a secure HTTPS page.');
   };
 
   const handleTestNotif = async () => {
@@ -33,31 +46,34 @@ export default function AlertsView() {
       const p = await requestNotificationPermission();
       setNotifPerm(p);
       if (p !== 'granted') {
-        alert('Please grant notification permissions in your browser to receive alerts outside the application.');
+        setNotice(p === 'denied'
+          ? 'Notifications are blocked for this site. Allow them in your browser’s site settings, then reload.'
+          : 'Notifications are unavailable here. Use the deployed HTTPS site in a supported browser.');
         return;
       }
     }
-    sendExternalNotification('🌱 Irriga-Tech Live Greenhouse Alert', {
+    const sent = await sendExternalNotification('🌱 Irriga-Tech Live Greenhouse Alert', {
       body: 'External OS alert test successful! You will receive critical alerts outside the app.',
       tag: 'test-alert'
     });
+    setNotice(sent ? 'Test notification sent. Check this site’s notification permission if it did not appear.' : 'Could not display a system notification. Check browser permission and HTTPS access.');
   };
 
   // Fetch real alerts from backend
   useEffect(() => {
     const base = typeof getApiUrl === 'function' ? getApiUrl() : 'http://localhost:3000';
-    fetch(`${base}/api/alerts`)
+    fetch(`${base}/api/alerts`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { alerts: [] })
       .then(({ alerts: rows = [] }) => {
         const mapped = rows.map(row => ({
           id: `db-${row.id}`,
-          type: row.type === 'warning' ? 'warning' : 'info',
+          type: ['warning', 'critical'].includes(String(row.type).toLowerCase()) ? 'warning' : 'info',
           icon: row.category === 'battery' ? Battery
               : row.category === 'water'   ? Droplets
               : row.category === 'temp'    ? Thermometer
               : CheckCircle2,
-          iconBg: row.type === 'warning' ? '#fef2f2' : '#ecfdf5',
-          iconColor: row.type === 'warning' ? '#dc2626' : '#059669',
+          iconBg: ['warning', 'critical'].includes(String(row.type).toLowerCase()) ? '#fef2f2' : '#ecfdf5',
+          iconColor: ['warning', 'critical'].includes(String(row.type).toLowerCase()) ? '#dc2626' : '#059669',
           title: row.title,
           description: row.message,
           time: new Date(row.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
@@ -66,7 +82,7 @@ export default function AlertsView() {
         setDbAlerts(mapped);
       })
       .catch(() => {});
-  }, [getApiUrl]);
+  }, [getApiUrl, authHeaders]);
 
   // Generate alerts from current sensor state + recent logs
   const alerts = useMemo(() => {
@@ -134,78 +150,49 @@ export default function AlertsView() {
       });
     }
 
-    // AI Recommendation ready
-    list.push({
-      id: 'ai-ready',
-      type: 'info',
-      icon: Sprout,
-      iconBg: '#f5f3ff',
-      iconColor: '#7c3aed',
-      title: 'AI Recommendation Ready',
-      description: 'New fertilizer recommendation available.',
-      time: 'Today, 05:30 AM',
-      ts: now - 43200000
-    });
-
-    // System status
-    list.push({
-      id: 'system-normal',
-      type: 'info',
-      icon: CheckCircle2,
-      iconBg: '#ecfdf5',
-      iconColor: '#059669',
-      title: 'System Online',
-      description: 'All sensors reporting normally. ESP32 connected.',
-      time: 'Just now',
-      ts: now
-    });
-
-    // Simulated past warnings for a richer feed
-    list.push({
-      id: 'battery-warn-past',
-      type: 'warning',
-      icon: Battery,
-      iconBg: '#fffbeb',
-      iconColor: '#d97706',
-      title: 'Low Battery',
-      description: 'Battery level was at 22%.',
-      time: '2 hours ago',
-      ts: now - 7200000
-    });
-
-    list.push({
-      id: 'water-warn-past',
-      type: 'warning',
-      icon: Droplets,
-      iconBg: '#fffbeb',
-      iconColor: '#d97706',
-      title: 'Water Tank Low',
-      description: 'Water level was 15%.',
-      time: '4 hours ago',
-      ts: now - 14400000
-    });
-
-    list.push({
-      id: 'temp-warn-past',
-      type: 'warning',
-      icon: Thermometer,
-      iconBg: '#fef2f2',
-      iconColor: '#dc2626',
-      title: 'High Temperature',
-      description: 'Greenhouse temperature was 34°C.',
-      time: '6 hours ago',
-      ts: now - 21600000
+    if (connected) list.push({
+      id: 'system-online', type: 'info', icon: CheckCircle2,
+      iconBg: '#ecfdf5', iconColor: '#059669', title: 'System Online',
+      description: mode === 'demo' ? 'Demo sensor feed is active.' : 'Controller is connected.',
+      time: 'Just now', ts: now
     });
 
     return list.sort((a, b) => b.ts - a.ts);
-  }, [temperature, humidity, soilMoisture, waterTank, batterySoc, irrigationLogs]);
+  }, [temperature, humidity, soilMoisture, waterTank, batterySoc, irrigationLogs, connected, mode]);
 
   // Merge DB alerts with sensor-derived alerts (deduplicate by id)
-  const allAlerts = useMemo(() => {
+  const sourceAlerts = useMemo(() => {
     const map = new Map();
     [...alerts, ...dbAlerts].forEach(a => map.set(a.id, a));
     return Array.from(map.values()).sort((a, b) => b.ts - a.ts);
   }, [alerts, dbAlerts]);
+
+  const allAlerts = useMemo(() => sourceAlerts.filter(alert => !dismissedIds.includes(alert.id)), [sourceAlerts, dismissedIds]);
+
+  // Keep saved/server alert dismissals until the user clears them. Drop a dismissed
+  // live condition after it has recovered so it can notify again if it recurs later.
+  useEffect(() => {
+    const recurringIds = new Set(['battery-low', 'water-low', 'temp-high', 'irrigation-done', 'system-online']);
+    const activeIds = new Set(sourceAlerts.map(alert => alert.id));
+    setDismissedIds(previous => {
+      const next = previous.filter(id => !recurringIds.has(id) || activeIds.has(id));
+      if (next.length !== previous.length) localStorage.setItem(dismissedStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }, [sourceAlerts, dismissedStorageKey]);
+
+  const dismissAlert = async (id) => {
+    const next = [...new Set([...dismissedIds, id])];
+    setDismissedIds(next);
+    localStorage.setItem(dismissedStorageKey, JSON.stringify(next));
+  };
+
+  const clearAlerts = async () => {
+    const next = [...new Set([...dismissedIds, ...sourceAlerts.map(alert => alert.id)])];
+    setDismissedIds(next);
+    localStorage.setItem(dismissedStorageKey, JSON.stringify(next));
+    setNotice('Notifications cleared from this account’s view.');
+  };
 
   const filteredAlerts = activeFilter === 'all' 
     ? allAlerts 
@@ -242,8 +229,10 @@ export default function AlertsView() {
               {warningCount}
             </span>
           )}
+          {allAlerts.length > 0 && <button onClick={clearAlerts} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '.35rem', border: '1px solid #fecaca', borderRadius: 9, padding: '.45rem .7rem', background: '#fff1f2', color: '#be123c', fontWeight: 700, cursor: 'pointer' }}><Trash2 size={14} /> Clear notifications</button>}
         </div>
       </div>
+      {notice && <div role="status" style={{ marginBottom: '1rem', padding: '.65rem .85rem', borderRadius: 9, background: '#f1f5f9', color: '#475569', fontSize: '.82rem' }}>{notice}</div>}
 
       {/* External Desktop / OS Notifications Card */}
       <div style={{
@@ -285,19 +274,23 @@ export default function AlertsView() {
                 background: notifPerm === 'granted' ? '#dcfce7' : notifPerm === 'denied' ? '#fee2e2' : '#fef3c7',
                 color: notifPerm === 'granted' ? '#15803d' : notifPerm === 'denied' ? '#dc2626' : '#d97706'
               }}>
-                {notifPerm === 'granted' ? 'Active' : notifPerm === 'denied' ? 'Blocked' : 'Available'}
+                {notifPerm === 'granted' ? 'Active' : notifPerm === 'denied' ? 'Blocked' : notifPerm === 'unsupported' ? 'Unsupported' : 'Available'}
               </span>
             </div>
             <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-              {notifPerm === 'granted' 
-                ? 'System alerts will pop up on your OS outside the browser when pumps trigger or thresholds breach.'
-                : 'Receive native OS alerts outside the browser even when minimized.'}
+              {notifPerm === 'granted'
+                ? 'System alerts can appear while this site is open or running in the background. Alerts while the site is fully closed require push notifications, which are not configured.'
+                : notifPerm === 'denied'
+                  ? 'Notifications are blocked. Allow them in this site’s browser settings to enable OS alerts.'
+                  : notifPerm === 'unsupported'
+                    ? 'Use a supported browser over HTTPS to enable OS alerts.'
+                    : 'Allow notifications to show greenhouse alerts outside this page.'}
             </p>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {notifPerm !== 'granted' && (
+          {notifPerm === 'default' && (
             <button
               onClick={handleRequestNotif}
               style={{
@@ -319,6 +312,7 @@ export default function AlertsView() {
           )}
           <button
             onClick={handleTestNotif}
+            disabled={notifPerm === 'unsupported' || notifPerm === 'denied'}
             style={{
               background: '#ffffff',
               color: '#334155',
@@ -414,6 +408,15 @@ export default function AlertsView() {
                   {alert.description}
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => dismissAlert(alert.id)}
+                aria-label={`Clear ${alert.title} notification`}
+                title="Clear notification"
+                style={{ border: 0, background: 'transparent', color: '#94a3b8', padding: '.25rem', cursor: 'pointer' }}
+              >
+                <X size={16} />
+              </button>
               <span style={{ 
                 fontSize: '0.68rem', 
                 color: '#94a3b8', 
@@ -437,7 +440,7 @@ export default function AlertsView() {
             <Bell size={32} style={{ margin: '0 auto 0.75rem', opacity: 0.5 }} />
             <div>No {activeFilter} alerts at this time</div>
           </div>
-        )}
+          )}
       </div>
     </div>
   );

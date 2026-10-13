@@ -11,7 +11,7 @@ import {
 
 export default function AnalyticsView() {
   const { history, soilMoisture, solarWatts, solarDailyKwh } = useSensors();
-  const { getApiUrl } = useAuth() || {};
+  const { getApiUrl, authHeaders, isDemo } = useAuth() || {};
 
   const [activeCategory, setActiveCategory] = useState('overview');
   const [timeRange, setTimeRange] = useState('7days');
@@ -44,12 +44,13 @@ export default function AnalyticsView() {
     }));
   }, []);
 
-  const [weeklyData, setWeeklyData] = useState(simulatedWeeklyData);
+  const [weeklyData, setWeeklyData] = useState(isDemo ? simulatedWeeklyData : []);
 
   // Fetch real weekly stats from backend
   useEffect(() => {
+    setWeeklyData(isDemo ? simulatedWeeklyData : []);
     const base = typeof getApiUrl === 'function' ? getApiUrl() : 'http://localhost:3000';
-    fetch(`${base}/api/stats/weekly`)
+    fetch(`${base}/api/stats/weekly`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { stats: [] })
       .then(({ stats = [] }) => {
         if (stats.length > 0) {
@@ -66,7 +67,7 @@ export default function AnalyticsView() {
         }
       })
       .catch(() => {});
-  }, [getApiUrl]);
+  }, [getApiUrl, authHeaders, isDemo, simulatedWeeklyData]);
 
   const trendData = history.map((h) => ({
     time: new Date(h.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -96,6 +97,7 @@ export default function AnalyticsView() {
         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', margin: 0 }}>
           Analytics & History
         </h1>
+        {!isDemo && weeklyData.length === 0 && <p role="status" style={{ color: '#64748b', fontSize: '.82rem', margin: '.4rem 0 0' }}>No saved analytics are available yet. Charts will populate after the controller records readings.</p>}
       </div>
 
       {/* Category Tabs - matching layout.png screen 8 */}

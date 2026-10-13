@@ -86,15 +86,25 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
    - `TIDB_PASSWORD` = `<your-secure-tidb-password>`
    - `TIDB_DATABASE` = `irrigatech`
    - `TIDB_SSL` = `true`
+   - `JWT_SECRET` = a unique, randomly generated secret (required; use the same value across backend instances)
    - `PORT` = `3000`
 4. In **Settings** → **Networking**, click **Generate Domain** (e.g. `irrigatech-production.up.railway.app`).
+   Railway provisions HTTPS for its generated domain automatically. Open the generated `https://` URL to use the combined frontend and API deployment. Do not use the raw service address or an `http://` URL for browser notifications.
+5. Add these server-only variables in Railway **Variables** to enable real Africa's Talking SMS:
+   - `AT_USERNAME` = your Africa's Talking app username (`Irriga-Tech` for the credentials provided for local setup)
+   - `AT_API_KEY` = the API key from the Africa's Talking dashboard (keep it in Railway Variables; never use a `VITE_` variable)
+   - `AT_SENDER_ID` = only the sender ID approved for your Africa's Talking account; omit this until it is approved
+
+For local development, place these `AT_*` variables in `server/.env.local`. That file is ignored by Git and is loaded by the backend. Never copy API keys into the frontend `.env.local` or commit a credentials file. Local `localhost` is treated as a secure context by browsers; production OS notifications require the HTTPS Railway/Vercel domain and the user to allow the browser prompt.
 
 ### Frontend (Vercel)
 1. Go to [vercel.com](https://vercel.com) and click **Add New** → **Project**.
 2. Import `jakommatin-design/irrigatech`.
 3. In **Environment Variables**, add:
-   - `VITE_SERVER_URL` = `https://your-railway-app.up.railway.app`
+   - `VITE_SERVER_URL` = the generated Railway backend URL beginning with `https://`
 4. Click **Deploy**.
+
+Browser/OS notifications require the deployed site to use HTTPS and the user to allow notifications in the browser prompt. The app can show alerts while it is open or running in the background; alerts after the site is fully closed require a Web Push service and VAPID keys, which are not configured yet.
 
 ---
 
