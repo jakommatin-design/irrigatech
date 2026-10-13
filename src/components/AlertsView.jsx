@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
 import { 
   Bell, AlertTriangle, Battery, Droplets, 
   Thermometer, CheckCircle2, Sprout, Info, 
@@ -11,8 +12,35 @@ export default function AlertsView() {
     temperature, humidity, soilMoisture, waterTank, batterySoc,
     irrigationLogs
   } = useSensors();
+  const { getApiUrl } = useAuth() || {};
 
   const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'warnings' | 'info'
+  const [dbAlerts, setDbAlerts] = useState([]);
+
+  // Fetch real alerts from backend
+  useEffect(() => {
+    const base = typeof getApiUrl === 'function' ? getApiUrl() : 'http://localhost:3000';
+    fetch(`${base}/api/alerts`)
+      .then(r => r.ok ? r.json() : { alerts: [] })
+      .then(({ alerts: rows = [] }) => {
+        const mapped = rows.map(row => ({
+          id: `db-${row.id}`,
+          type: row.type === 'warning' ? 'warning' : 'info',
+          icon: row.category === 'battery' ? Battery
+              : row.category === 'water'   ? Droplets
+              : row.category === 'temp'    ? Thermometer
+              : CheckCircle2,
+          iconBg: row.type === 'warning' ? '#fef2f2' : '#ecfdf5',
+          iconColor: row.type === 'warning' ? '#dc2626' : '#059669',
+          title: row.title,
+          description: row.message,
+          time: new Date(row.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
+          ts: row.timestamp
+        }));
+        setDbAlerts(mapped);
+      })
+      .catch(() => {});
+  }, [getApiUrl]);
 
   // Generate alerts from current sensor state + recent logs
   const alerts = useMemo(() => {
@@ -146,9 +174,16 @@ export default function AlertsView() {
     return list.sort((a, b) => b.ts - a.ts);
   }, [temperature, humidity, soilMoisture, waterTank, batterySoc, irrigationLogs]);
 
+  // Merge DB alerts with sensor-derived alerts (deduplicate by id)
+  const allAlerts = useMemo(() => {
+    const map = new Map();
+    [...alerts, ...dbAlerts].forEach(a => map.set(a.id, a));
+    return Array.from(map.values()).sort((a, b) => b.ts - a.ts);
+  }, [alerts, dbAlerts]);
+
   const filteredAlerts = activeFilter === 'all' 
-    ? alerts 
-    : alerts.filter(a => a.type === (activeFilter === 'warnings' ? 'warning' : 'info'));
+    ? allAlerts 
+    : allAlerts.filter(a => a.type === (activeFilter === 'warnings' ? 'warning' : 'info'));
 
   const filterTabs = [
     { id: 'all', label: 'All' },
@@ -156,7 +191,7 @@ export default function AlertsView() {
     { id: 'info', label: 'Info' }
   ];
 
-  const warningCount = alerts.filter(a => a.type === 'warning').length;
+  const warningCount = allAlerts.filter(a => a.type === 'warning').length;
 
   return (
     <div style={{ maxWidth: '700px', margin: '0 auto', padding: '1.25rem 1rem 5rem' }}>

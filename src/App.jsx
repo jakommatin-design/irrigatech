@@ -23,7 +23,10 @@ function MainApp() {
 
   // If opening splash screen is requested (matching Image 1)
   if (showSplash) {
-    return <OpeningScreen onContinue={() => setShowSplash(false)} />;
+    return <OpeningScreen onContinue={() => {
+      sessionStorage.setItem('irrigatech_visited', '1');
+      setShowSplash(false);
+    }} />;
   }
 
   return (

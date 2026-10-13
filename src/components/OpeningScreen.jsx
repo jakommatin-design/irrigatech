@@ -1,215 +1,234 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Leaf, ArrowRight, Sun, Cpu, Sparkles, ShieldCheck } from 'lucide-react';
 import logoImg from '../assets/site_logo.jpeg';
 
 export default function OpeningScreen({ onContinue }) {
   const { setShowAuthModal } = useAuth();
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setLoaded(true), 80);
+    return () => clearTimeout(t);
+  }, []);
+
+
+  const fadeUp = (delay = 0) => ({
+    opacity: loaded ? 1 : 0,
+    transform: loaded ? 'translateY(0)' : 'translateY(22px)',
+    transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
+  });
 
   return (
     <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 40%, #f7fee7 100%)',
+      position: 'fixed',
+      inset: 0,
       display: 'flex',
       flexDirection: 'column',
-      justifyContent: 'space-between',
-      maxWidth: '480px',
-      margin: '0 auto',
-      position: 'relative',
       overflow: 'hidden',
-      boxShadow: '0 20px 40px rgba(0,0,0,0.08)'
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     }}>
-      {/* Top Status Simulation Bar */}
+
+      {/* ── Background ── */}
       <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '0.75rem 1.5rem',
-        fontSize: '0.85rem',
-        fontWeight: 700,
-        color: '#0f172a'
-      }}>
-        <span>9:41</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <span style={{ fontSize: '0.75rem' }}>5G</span>
-          <span style={{ width: '16px', height: '10px', border: '1px solid #0f172a', borderRadius: '2px', display: 'inline-block', position: 'relative' }}>
-            <span style={{ position: 'absolute', inset: '1px', background: '#16a34a', width: '80%' }} />
-          </span>
-        </div>
-      </div>
+        position: 'absolute', inset: 0, zIndex: 0,
+        backgroundImage: `url('https://www.gardeningknowhow.com/wp-content/uploads/2013/10/greenhouse.jpg')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center 30%',
+        transform: loaded ? 'scale(1)' : 'scale(1.06)',
+        transition: 'transform 1.8s cubic-bezier(0.25,0.46,0.45,0.94)',
+      }} />
 
-      {/* Main Content */}
-      <div style={{ padding: '1rem 1.5rem', textAlign: 'center', zIndex: 10 }}>
-        
-        {/* Top Logo Emblem */}
-        <div style={{
-          width: '76px',
-          height: '76px',
-          margin: '0 auto 1rem',
-          borderRadius: '22px',
-          background: 'linear-gradient(135deg, #22c55e 0%, #15803d 100%)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#ffffff',
-          boxShadow: '0 10px 25px rgba(22, 163, 74, 0.3)'
-        }}>
-          <Leaf size={42} />
-        </div>
-
-        {/* Brand Name & Subtitle matching Image 1 */}
-        <h1 style={{
-          fontSize: '2.4rem',
-          fontWeight: 800,
-          color: '#064e3b',
-          letterSpacing: '-0.03em',
-          margin: '0 0 0.35rem'
-        }}>
-          Irriga-Tech
-        </h1>
-        <p style={{
-          fontSize: '0.9rem',
-          fontWeight: 600,
-          color: '#059669',
-          margin: '0 0 2rem'
-        }}>
-          Smart Greenhouse • Smarter Agriculture
-        </p>
-
-        {/* Center Emblem matching Image 1 */}
-        <div style={{
-          width: '120px',
-          height: '110px',
-          margin: '0 auto 1.5rem',
-          position: 'relative',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
-          {/* Wireframe dome overlay */}
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            border: '2px solid #16a34a',
-            borderRadius: '50% 50% 12px 12px',
-            opacity: 0.85
-          }} />
-          <div style={{
-            width: '64px',
-            height: '64px',
-            borderRadius: '50%',
-            background: '#ecfdf5',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#15803d',
-            boxShadow: '0 4px 12px rgba(22, 163, 74, 0.15)'
-          }}>
-            <Leaf size={32} />
-          </div>
-        </div>
-
-        {/* Triple Feature Pill */}
-        <div style={{
-          fontSize: '0.92rem',
-          fontWeight: 800,
-          color: '#047857',
-          letterSpacing: '0.02em',
-          marginBottom: '1rem'
-        }}>
-          AI-Driven • Solar-Powered • IoT Enabled
-        </div>
-
-        {/* Slogan strip */}
-        <div style={{
-          fontSize: '0.78rem',
-          fontWeight: 600,
-          color: '#475569',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: '0.5rem',
-          marginBottom: '2rem'
-        }}>
-          <span>Healthy Crops</span>
-          <span>|</span>
-          <span>Better Yields</span>
-          <span>|</span>
-          <span>Sustainable Future</span>
-        </div>
-
-      </div>
-
-      {/* Bottom Greenhouse & Solar Panel Visual Card with Buttons */}
+      {/* ── Overlay ── */}
       <div style={{
-        position: 'relative',
-        borderRadius: '32px 32px 0 0',
-        overflow: 'hidden',
-        background: 'linear-gradient(180deg, rgba(6, 78, 59, 0.92) 0%, #064e3b 100%)',
-        padding: '2rem 1.5rem 2.5rem',
-        color: '#ffffff',
-        textAlign: 'center'
-      }}>
-        {/* Subtle solar greenhouse grid background */}
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          opacity: 0.15,
-          backgroundImage: 'radial-gradient(#34d399 1.5px, transparent 1.5px)',
-          backgroundSize: '18px 18px'
-        }} />
+        position: 'absolute', inset: 0, zIndex: 1,
+        background: `
+          linear-gradient(135deg, rgba(1,32,24,0.88) 0%, rgba(4,60,46,0.65) 40%, rgba(0,0,0,0.2) 75%),
+          linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.25) 50%, transparent 80%)
+        `,
+      }} />
 
-        <div style={{ position: 'relative', zIndex: 10 }}>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
-            <span style={{ padding: '0.3rem 0.75rem', borderRadius: '9999px', background: 'rgba(255,255,255,0.15)', fontSize: '0.72rem', fontWeight: 600 }}>
-              🌿 Multi-Crop Ready
-            </span>
-            <span style={{ padding: '0.3rem 0.75rem', borderRadius: '9999px', background: 'rgba(255,255,255,0.15)', fontSize: '0.72rem', fontWeight: 600 }}>
-              ⚡ 100% Solar Off-Grid
-            </span>
+      {/* ── Subtle grid ── */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 2,
+        backgroundImage: `
+          linear-gradient(rgba(52,211,153,0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(52,211,153,0.035) 1px, transparent 1px)
+        `,
+        backgroundSize: '64px 64px',
+      }} />
+
+      {/* ── Glow orbs ── */}
+      <div style={{
+        position: 'absolute', top: '10%', right: '10%', zIndex: 2,
+        width: '380px', height: '380px', borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(52,211,153,0.1) 0%, transparent 70%)',
+        animation: 'float 9s ease-in-out infinite',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', bottom: '20%', right: '20%', zIndex: 2,
+        width: '220px', height: '220px', borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(129,140,248,0.09) 0%, transparent 70%)',
+        animation: 'float 12s ease-in-out infinite reverse',
+        pointerEvents: 'none',
+      }} />
+
+      {/* ════════════════════════════════════════
+          ALL CONTENT — normal flex column flow
+      ════════════════════════════════════════ */}
+      <div style={{
+        position: 'relative', zIndex: 10,
+        display: 'flex', flexDirection: 'column',
+        height: '100%',
+        padding: '0',
+      }}>
+
+        {/* ── Top Nav ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '1.2rem 2.5rem',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          ...fadeUp(0.05),
+        }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
+            <img
+              src={logoImg}
+              alt="Irriga-Tech Logo"
+              style={{
+                width: '44px', height: '44px',
+                borderRadius: '12px',
+                objectFit: 'cover',
+                boxShadow: '0 4px 16px rgba(52,211,153,0.35)',
+                border: '1.5px solid rgba(52,211,153,0.4)',
+              }}
+            />
+            <div>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.02em', lineHeight: 1 }}>
+                Irriga<span style={{ color: '#34d399' }}>Tech</span>
+              </div>
+              <div style={{ fontSize: '0.58rem', color: 'rgba(255,255,255,0.45)', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', marginTop: '1px' }}>
+                Smart Greenhouse OS
+              </div>
+            </div>
           </div>
 
-          <button
-            onClick={onContinue}
-            style={{
-              width: '100%',
-              padding: '1rem',
-              borderRadius: '16px',
-              background: '#22c55e',
-              color: '#ffffff',
-              fontSize: '1rem',
-              fontWeight: 800,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-              boxShadow: '0 8px 20px rgba(34, 197, 94, 0.4)',
+          {/* Nav buttons */}
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+            <button onClick={() => setShowAuthModal(true)} style={{
+              padding: '0.5rem 1.2rem', borderRadius: '8px',
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.18)',
+              color: '#fff', fontSize: '0.82rem', fontWeight: 600,
+              cursor: 'pointer', backdropFilter: 'blur(10px)',
+              transition: 'background 0.2s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.14)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+            >
+              Sign In
+            </button>
+            <button onClick={onContinue} style={{
+              padding: '0.5rem 1.3rem', borderRadius: '8px',
+              background: 'linear-gradient(135deg,#34d399,#059669)',
+              border: 'none', color: '#fff',
+              fontSize: '0.82rem', fontWeight: 700,
               cursor: 'pointer',
-              marginBottom: '0.75rem'
+              boxShadow: '0 4px 14px rgba(52,211,153,0.38)',
+              transition: 'opacity 0.2s',
             }}
-          >
-            <span>Enter Smart Greenhouse</span>
-            <ArrowRight size={18} />
-          </button>
+              onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+            >
+              Dashboard →
+            </button>
+          </div>
+        </div>
 
-          <button
-            onClick={() => setShowAuthModal(true)}
-            style={{
-              width: '100%',
-              padding: '0.8rem',
-              borderRadius: '14px',
-              background: 'rgba(255, 255, 255, 0.1)',
-              color: '#ffffff',
-              fontSize: '0.85rem',
-              fontWeight: 700,
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              cursor: 'pointer'
-            }}
-          >
-            Farmer Sign In / Account Portal
-          </button>
+        {/* ── Hero ── */}
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          textAlign: 'center',
+          padding: '2rem 2.5rem 1.5rem',
+        }}>
+
+          {/* Headline */}
+          <h1 style={{
+            fontSize: 'clamp(2.8rem, 5.5vw, 5rem)',
+            fontWeight: 900,
+            color: '#fff',
+            letterSpacing: '-0.038em',
+            lineHeight: 1.05,
+            margin: '0 0 1.1rem',
+            maxWidth: '780px',
+            ...fadeUp(0.28),
+          }}>
+            The Future of<br />
+            <span style={{
+              background: 'linear-gradient(90deg,#34d399 0%,#6ee7b7 55%,#a7f3d0 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+            }}>
+              Smart Farming
+            </span>
+          </h1>
+
+          {/* Sub-headline */}
+          <p style={{
+            fontSize: 'clamp(0.9rem, 1.5vw, 1.08rem)',
+            color: 'rgba(255,255,255,0.6)',
+            lineHeight: 1.75,
+            maxWidth: '560px',
+            margin: '0 0 2.5rem',
+            fontWeight: 400,
+            ...fadeUp(0.38),
+          }}>
+            AI-driven precision irrigation, solar-powered autonomy, and real-time IoT monitoring — all in one intelligent greenhouse platform.
+          </p>
+
+          {/* Single CTA */}
+          <div style={{ ...fadeUp(0.47) }}>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                padding: '1rem 2.6rem', borderRadius: '14px',
+                background: 'linear-gradient(135deg,#34d399 0%,#059669 100%)',
+                border: 'none', color: '#fff',
+                fontSize: '1rem', fontWeight: 800,
+                cursor: 'pointer', letterSpacing: '-0.01em',
+                boxShadow: '0 8px 28px rgba(52,211,153,0.42), 0 2px 10px rgba(0,0,0,0.3)',
+                transition: 'transform 0.2s, box-shadow 0.2s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 14px 36px rgba(52,211,153,0.55)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 8px 28px rgba(52,211,153,0.42)'; }}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+              </svg>
+              Farmer Sign In
+            </button>
+          </div>
+
         </div>
       </div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
+        @keyframes float {
+          0%,100% { transform: translateY(0) scale(1); }
+          50%      { transform: translateY(-18px) scale(1.04); }
+        }
+        @keyframes pulseDot {
+          0%,100% { opacity:1; box-shadow: 0 0 8px #34d399; }
+          50%      { opacity:0.55; box-shadow: 0 0 16px #34d399; }
+        }
+      `}</style>
     </div>
   );
 }

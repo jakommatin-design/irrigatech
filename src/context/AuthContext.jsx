@@ -54,7 +54,10 @@ export function AuthProvider({ children }) {
   });
 
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showSplash, setShowSplash] = useState(false);
+  const [showSplash, setShowSplash] = useState(() => {
+    // Show the splash unless already visited in this session
+    return !sessionStorage.getItem('irrigatech_visited');
+  });
 
   const getApiUrl = useCallback(() => {
     if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL;
@@ -279,6 +282,7 @@ export function AuthProvider({ children }) {
       users,
       settings,
       refreshData,
+      getApiUrl,
       addFarm,
       updateFarm,
       deleteFarm,

@@ -27,6 +27,25 @@ const DB_CONFIG = {
 let pool = null;
 let isConnected = false;
 
+// Network-level error codes that should trip the circuit breaker
+const FATAL_NET_CODES = new Set([
+  'ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND',
+  'PROTOCOL_CONNECTION_LOST', 'PROTOCOL_SEQUENCE_TIMEOUT',
+  'ER_QUERY_INTERRUPTED'
+]);
+
+function handleQueryError(err, label = 'query') {
+  if (FATAL_NET_CODES.has(err.code) || FATAL_NET_CODES.has(err.errno)) {
+    if (isConnected) {
+      isConnected = false;
+      console.warn(`[TiDB] ⚠️  Circuit breaker tripped on ${label} (${err.code}). Falling back to SQLite.`);
+    }
+    // silent — suppress repeated log spam
+  } else {
+    console.error(`[TiDB] Error in ${label}:`, err.message);
+  }
+}
+
 // ─── 1. Initialize Pool & Schema ───────────────────────────────────────────
 export async function initTiDB() {
   if (!DB_CONFIG.password) {
@@ -246,7 +265,7 @@ export const tidb = {
       ];
       await pool.query(query, values);
     } catch (err) {
-      console.error('[TiDB] Error logging telemetry:', err.message);
+      handleQueryError(err, 'logTelemetry');
     }
   },
 
@@ -261,7 +280,7 @@ export const tidb = {
       `;
       await pool.query(query, [ts, new Date(ts).toISOString(), action, reason, source, zoneId, duration, waterLiters]);
     } catch (err) {
-      console.error('[TiDB] Error logging irrigation:', err.message);
+      handleQueryError(err, 'logIrrigation');
     }
   },
 
@@ -275,7 +294,7 @@ export const tidb = {
       `;
       await pool.query(query, [ts, new Date(ts).toISOString(), type, category, title, message]);
     } catch (err) {
-      console.error('[TiDB] Error logging alert:', err.message);
+      handleQueryError(err, 'logAlert');
     }
   },
 
@@ -288,7 +307,7 @@ export const tidb = {
       );
       return rows.reverse();
     } catch (err) {
-      console.error('[TiDB] Error reading telemetry:', err.message);
+      handleQueryError(err, 'getRecentTelemetry');
       return [];
     }
   },
@@ -302,7 +321,7 @@ export const tidb = {
       );
       return rows;
     } catch (err) {
-      console.error('[TiDB] Error reading irrigation logs:', err.message);
+      handleQueryError(err, 'getIrrigationLogs');
       return [];
     }
   },
@@ -316,7 +335,7 @@ export const tidb = {
       );
       return rows;
     } catch (err) {
-      console.error('[TiDB] Error reading alerts:', err.message);
+      handleQueryError(err, 'getAlerts');
       return [];
     }
   },
@@ -328,7 +347,7 @@ export const tidb = {
       const [rows] = await pool.query('SELECT * FROM farms');
       return rows;
     } catch (err) {
-      console.error('[TiDB] Error reading farms:', err.message);
+      handleQueryError(err, 'getFarms');
       return null;
     }
   },
@@ -339,7 +358,7 @@ export const tidb = {
       const [rows] = await pool.query('SELECT * FROM farms WHERE id = ?', [id]);
       return rows[0] || null;
     } catch (err) {
-      console.error('[TiDB] Error getting farm:', err.message);
+      handleQueryError(err, 'getFarmById');
       return null;
     }
   },
@@ -362,7 +381,7 @@ export const tidb = {
       ]);
       return this.getFarmById(id);
     } catch (err) {
-      console.error('[TiDB] Error creating farm:', err.message);
+      handleQueryError(err, 'createFarm');
       return null;
     }
   },
@@ -390,7 +409,7 @@ export const tidb = {
       ]);
       return this.getFarmById(id);
     } catch (err) {
-      console.error('[TiDB] Error updating farm:', err.message);
+      handleQueryError(err, 'updateFarm');
       return null;
     }
   },
@@ -401,7 +420,7 @@ export const tidb = {
       const [result] = await pool.query('DELETE FROM farms WHERE id = ?', [id]);
       return result.affectedRows > 0;
     } catch (err) {
-      console.error('[TiDB] Error deleting farm:', err.message);
+      handleQueryError(err, 'deleteFarm');
       return false;
     }
   },
@@ -413,7 +432,7 @@ export const tidb = {
       const [rows] = await pool.query('SELECT * FROM users ORDER BY created_at ASC');
       return rows;
     } catch (err) {
-      console.error('[TiDB] Error reading users:', err.message);
+      handleQueryError(err, 'getUsers');
       return null;
     }
   },
@@ -424,7 +443,7 @@ export const tidb = {
       const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
       return rows[0] || null;
     } catch (err) {
-      console.error('[TiDB] Error reading user:', err.message);
+      handleQueryError(err, 'getUserById');
       return null;
     }
   },
@@ -449,7 +468,7 @@ export const tidb = {
       ]);
       return this.getUserById(id);
     } catch (err) {
-      console.error('[TiDB] Error creating user:', err.message);
+      handleQueryError(err, 'createUser');
       return null;
     }
   },
@@ -478,7 +497,7 @@ export const tidb = {
       ]);
       return this.getUserById(id);
     } catch (err) {
-      console.error('[TiDB] Error updating user:', err.message);
+      handleQueryError(err, 'updateUser');
       return null;
     }
   },
@@ -489,7 +508,7 @@ export const tidb = {
       const [result] = await pool.query('DELETE FROM users WHERE id = ?', [id]);
       return result.affectedRows > 0;
     } catch (err) {
-      console.error('[TiDB] Error deleting user:', err.message);
+      handleQueryError(err, 'deleteUser');
       return false;
     }
   },
@@ -509,7 +528,7 @@ export const tidb = {
       }
       return result;
     } catch (err) {
-      console.error('[TiDB] Error reading settings:', err.message);
+      handleQueryError(err, 'getSettings');
       return null;
     }
   },
@@ -525,7 +544,7 @@ export const tidb = {
         return rows[0].value;
       }
     } catch (err) {
-      console.error('[TiDB] Error reading setting:', err.message);
+      handleQueryError(err, 'getSetting');
       return null;
     }
   },
@@ -545,7 +564,7 @@ export const tidb = {
       `, [key, strVal, category, now]);
       return this.getSetting(key);
     } catch (err) {
-      console.error('[TiDB] Error updating setting:', err.message);
+      handleQueryError(err, 'updateSetting');
       return null;
     }
   },
@@ -576,7 +595,7 @@ export const tidb = {
       `, [oneWeekAgo]);
       return rows;
     } catch (err) {
-      console.error('[TiDB] Error reading weekly stats:', err.message);
+      handleQueryError(err, 'getWeeklyStats');
       return [];
     }
   }

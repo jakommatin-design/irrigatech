@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useSensors } from '../context/SensorContext';
+import { useAuth } from '../context/AuthContext';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Area, AreaChart, Legend
@@ -10,6 +11,7 @@ import {
 
 export default function AnalyticsView() {
   const { history, soilMoisture, solarWatts, solarDailyKwh } = useSensors();
+  const { getApiUrl } = useAuth() || {};
 
   const [activeCategory, setActiveCategory] = useState('overview');
   const [timeRange, setTimeRange] = useState('7days');
@@ -28,10 +30,10 @@ export default function AnalyticsView() {
     { id: 'custom', label: 'Custom' }
   ];
 
-  // Generate weekly simulated data
-  const weeklyData = useMemo(() => {
+  // Generate fallback simulated data
+  const simulatedWeeklyData = useMemo(() => {
     const days = ['Apr 21', 'Apr 22', 'Apr 23', 'Apr 24', 'Apr 25', 'Apr 26', 'Apr 27'];
-    return days.map((day, i) => ({
+    return days.map((day) => ({
       day,
       soilZone1: 35 + Math.random() * 20,
       soilZone2: 38 + Math.random() * 18,
@@ -42,7 +44,31 @@ export default function AnalyticsView() {
     }));
   }, []);
 
-  const trendData = history.map((h, i) => ({
+  const [weeklyData, setWeeklyData] = useState(simulatedWeeklyData);
+
+  // Fetch real weekly stats from backend
+  useEffect(() => {
+    const base = typeof getApiUrl === 'function' ? getApiUrl() : 'http://localhost:3000';
+    fetch(`${base}/api/stats/weekly`)
+      .then(r => r.ok ? r.json() : { stats: [] })
+      .then(({ stats = [] }) => {
+        if (stats.length > 0) {
+          const mapped = stats.map(row => ({
+            day: new Date(row.date_bucket || row.day || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            soilZone1: parseFloat(row.avg_soil_zone1 ?? row.avg_soil ?? 42),
+            soilZone2: parseFloat(row.avg_soil_zone2 ?? 44),
+            waterUsage: parseFloat(row.water_liters ?? row.water_usage ?? 15),
+            solarGen: parseFloat(row.solar_kwh ?? row.solar_gen ?? 3.5),
+            temp: parseFloat(row.avg_temp ?? 28),
+            humidity: parseFloat(row.avg_humidity ?? 65),
+          }));
+          setWeeklyData(mapped);
+        }
+      })
+      .catch(() => {});
+  }, [getApiUrl]);
+
+  const trendData = history.map((h) => ({
     time: new Date(h.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     soil: h.soilMoisture,
     temp: h.temperature,
