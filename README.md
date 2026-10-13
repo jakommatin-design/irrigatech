@@ -55,22 +55,14 @@ Firmware source is located in [`firmware/irriga_tech_firmware.ino`](firmware/irr
 - Node.js 18+ & npm
 - Arduino IDE (if uploading firmware to microcontroller)
 
-### 2. Backend Server Setup
-```bash
-cd server
+### 2. Local Development (Frontend + Backend)
+Install dependencies in both folders once. Configure `server/.env.local` (or `server/.env`) for your backend credentials, connect and flash the ESP32, then start the frontend and backend together:
+```powershell
 npm install
-cp .env.example .env
-# Edit .env with your TiDB Cloud credentials
-npm start
+npm --prefix server install
+npm run dev:all
 ```
-
-### 3. Frontend Dashboard Setup
-```bash
-# In the project root
-npm install
-npm run dev
-```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:5173](http://localhost:5173). The backend listens on `http://localhost:3000`. To force a specific USB port, set `SERIAL_PORT=COM3` (replace `COM3` with the port shown in Windows Device Manager) and `SERIAL_BAUD_RATE=9600` in `server/.env.local`. The firmware must use the same baud rate. Leave `SERIAL_PORT` blank to auto-detect supported Arduino/ESP32 USB adapters. `npm --prefix server run list-serial-ports` lists ports the backend can see. Close Arduino Serial Monitor before starting the backend because only one program can use a serial port at a time.
 
 ---
 

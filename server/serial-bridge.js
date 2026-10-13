@@ -27,46 +27,80 @@ export class SerialBridge extends EventEmitter {
   }
 
   async init() {
-    // Attempt real serialport if installed, otherwise fallback to software simulator
+    const configuredPort = process.env.SERIAL_PORT?.trim();
+    const baudRate = Number.parseInt(process.env.SERIAL_BAUD_RATE || '9600', 10);
+
     try {
       const { SerialPort } = await import('serialport');
       const { ReadlineParser } = await import('@serialport/parser-readline');
-      
       const ports = await SerialPort.list();
-      const arduinoPort = ports.find(p => 
-        (p.manufacturer && p.manufacturer.toLowerCase().includes('arduino')) ||
-        (p.friendlyName && p.friendlyName.toLowerCase().includes('arduino')) ||
-        (p.vendorId && ['2341', '1a86'].includes(p.vendorId.toLowerCase()))
-      );
+      const normalizedConfiguredPort = configuredPort?.toLowerCase();
+      const supportedVendorIds = ['2341', '1a86', '10c4', '0403', '303a'];
+      const detectedPort = configuredPort
+        ? ports.find(port => port.path.toLowerCase() === normalizedConfiguredPort)
+        : ports.find(port => {
+            const manufacturer = `${port.manufacturer || ''} ${port.friendlyName || ''}`.toLowerCase();
+            return supportedVendorIds.includes(String(port.vendorId || '').toLowerCase())
+              || ['arduino', 'espressif', 'silicon labs', 'wch', 'ftdi'].some(name => manufacturer.includes(name));
+          });
 
-      if (arduinoPort) {
-        console.log(`[SerialBridge] Found Arduino at ${arduinoPort.path}`);
-        this.port = new SerialPort({ path: arduinoPort.path, baudRate: 9600 });
-        const parser = this.port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
-        
-        this.port.on('open', () => {
-          this.connected = true;
+      if (!detectedPort) {
+        if (configuredPort) {
           this.simulated = false;
-          this.portName = arduinoPort.path;
-          this.emit('status', { connected: true, port: this.portName, simulated: false });
-        });
-
-        parser.on('data', (line) => {
-          this.parseArduinoSerial(line);
-        });
-
-        this.port.on('error', (err) => {
-          console.warn('[SerialBridge] Serial error, falling back to simulator:', err.message);
-          this.startSimulation();
-        });
+          this.connected = false;
+          this.portName = configuredPort;
+          console.error(`[SerialBridge] Configured USB device ${configuredPort} was not found. Available ports: ${ports.map(port => port.path).join(', ') || 'none'}`);
+          this.emit('status', { connected: false, port: configuredPort, simulated: false });
+          return;
+        }
+        console.log(`[SerialBridge] No supported USB device found. Available ports: ${ports.map(port => port.path).join(', ') || 'none'}. Starting simulator.`);
+        this.startSimulation();
         return;
       }
-    } catch (e) {
-      // serialport package not present or native build skipped, start simulation
-    }
 
-    console.log('[SerialBridge] No physical Arduino detected on COM ports. Running Hardware Emulation mode.');
-    this.startSimulation();
+      console.log(`[SerialBridge] Opening USB serial device ${detectedPort.path} at ${baudRate} baud`);
+      const serialPort = new SerialPort({ path: detectedPort.path, baudRate, autoOpen: false });
+      this.port = serialPort;
+      const parser = serialPort.pipe(new ReadlineParser({ delimiter: '\n' }));
+      parser.on('data', line => this.parseArduinoSerial(line));
+      serialPort.on('open', () => {
+        this.connected = true;
+        this.simulated = false;
+        this.portName = detectedPort.path;
+        console.log(`[SerialBridge] USB device connected on ${detectedPort.path}`);
+        this.emit('status', { connected: true, port: this.portName, simulated: false });
+      });
+      serialPort.on('error', error => {
+        this.connected = false;
+        this.simulated = false;
+        console.error(`[SerialBridge] USB serial error on ${detectedPort.path}:`, error.message);
+        this.emit('status', { connected: false, port: detectedPort.path, simulated: false });
+      });
+      serialPort.on('close', () => {
+        this.connected = false;
+        this.simulated = false;
+        this.emit('status', { connected: false, port: detectedPort.path, simulated: false });
+      });
+      serialPort.open(error => {
+        if (error) {
+          this.connected = false;
+          this.simulated = false;
+          console.error(`[SerialBridge] Could not open ${detectedPort.path}: ${error.message}`);
+          this.emit('status', { connected: false, port: detectedPort.path, simulated: false });
+        }
+      });
+    } catch (error) {
+      if (configuredPort) {
+        this.connected = false;
+        this.simulated = false;
+        this.portName = configuredPort;
+        console.error(`[SerialBridge] USB serial setup failed: ${error.message}`);
+        this.emit('status', { connected: false, port: configuredPort, simulated: false });
+        return;
+      }
+      console.warn(`[SerialBridge] USB serial unavailable (${error.message}); starting simulator.`);
+      this.startSimulation();
+    }
   }
 
   parseArduinoSerial(line) {
@@ -80,6 +114,7 @@ export class SerialBridge extends EventEmitter {
       if (trimmed.startsWith('{')) {
         // — JSON mode (V2.4 firmware) —
         const parsed = JSON.parse(trimmed);
+        if (parsed.ack) return;
         if (parsed.error) {
           console.warn('[SerialBridge] Firmware error:', parsed.error);
           return;
@@ -142,7 +177,12 @@ export class SerialBridge extends EventEmitter {
     console.log(`[SerialBridge] Executing command: ${cmd}`);
     const prevPump = this.state.pump;
     if (this.port && this.port.isOpen) {
-      this.port.write(`${cmd}\n`);
+      this.port.write(`${cmd}\n`, error => {
+        if (error) console.error(`[SerialBridge] Failed to send ${cmd}:`, error.message);
+      });
+    } else if (process.env.SERIAL_PORT?.trim()) {
+      console.error(`[SerialBridge] Cannot send ${cmd}; configured USB device ${process.env.SERIAL_PORT} is not open.`);
+      return;
     } else {
       // Apply to simulated hardware
       if (cmd === 'PUMP_ON')  { this.state.pump = true;  this.state.led = true; }

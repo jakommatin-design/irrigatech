@@ -14,7 +14,7 @@ export default function AccountPortal() {
     isAuthenticated,
     deleteMyAccount,
     addFarm, updateFarm, deleteFarm,
-    addUser, updateUser, deleteUser, getApiUrl, authHeaders, refreshData
+    addUser, updateUser, deleteUser, getApiUrl, authHeaders, refreshData, setShowAuthModal
   } = useAuth();
   const { setThreshold } = useSensors();
   const farmList = Array.isArray(farms) ? farms : [];
@@ -30,6 +30,18 @@ export default function AccountPortal() {
   const [connectionRequests, setConnectionRequests] = useState([]);
   const [pendingConnectionRequests, setPendingConnectionRequests] = useState([]);
   const [isSubmittingConnection, setIsSubmittingConnection] = useState(false);
+
+  const requireAccountManagement = () => {
+    if (!isAuthenticated) {
+      setShowAuthModal(true);
+      return false;
+    }
+    if (!canManageAccounts) {
+      setActionError('Your account does not have permission to manage greenhouses or team members.');
+      return false;
+    }
+    return true;
+  };
 
   const handleDeleteAccount = async () => {
     const confirmed = window.confirm(
@@ -101,6 +113,7 @@ export default function AccountPortal() {
 
   const requestFarmConnection = async (event) => {
     event.preventDefault();
+    if (!isAuthenticated) { setShowAuthModal(true); return; }
     setActionError('');
     setIsSubmittingConnection(true);
     try {
@@ -138,6 +151,7 @@ export default function AccountPortal() {
 
   // ─── Farm Handlers ─────────────────────────────────────────────────────────
   const openNewFarmModal = () => {
+    if (!requireAccountManagement()) return;
     setEditingFarm(null);
     setFarmForm({
       name: '', crop: 'Tomato', location: 'Nanyuki Cluster', moisture_min: 35, moisture_max: 50, target_vpd: 0.85
@@ -147,6 +161,7 @@ export default function AccountPortal() {
 
   const openEditFarmModal = (farm, e) => {
     e.stopPropagation();
+    if (!requireAccountManagement()) return;
     setEditingFarm(farm);
     setFarmForm({
       name: farm.name,
@@ -174,6 +189,7 @@ export default function AccountPortal() {
 
   const handleDeleteFarm = async (id, name, e) => {
     e.stopPropagation();
+    if (!requireAccountManagement()) return;
     if (window.confirm(`Are you sure you want to delete ${name}?`)) {
       try { setActionError(''); await deleteFarm(id); }
       catch (err) { setActionError(err.message); }
@@ -182,6 +198,7 @@ export default function AccountPortal() {
 
   // ─── User Handlers ─────────────────────────────────────────────────────────
   const openNewUserModal = () => {
+    if (!requireAccountManagement()) return;
     setEditingUser(null);
     setUserForm({
       name: '', email: '', role: 'Farm Operator', phone: '+254 700 000 000', avatar: '👨‍🌾', password: ''
@@ -190,6 +207,7 @@ export default function AccountPortal() {
   };
 
   const openEditUserModal = (member) => {
+    if (!requireAccountManagement()) return;
     setEditingUser(member);
     setUserForm({
       name: member.name,
@@ -220,6 +238,7 @@ export default function AccountPortal() {
   };
 
   const handleDeleteUser = async (id, name) => {
+    if (!requireAccountManagement()) return;
     if (window.confirm(`Remove team member ${name}?`)) {
       try { setActionError(''); await deleteUser(id); }
       catch (err) { setActionError(err.message); }
@@ -352,8 +371,7 @@ export default function AccountPortal() {
 
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
-                onClick={() => isAuthenticated && setIsEditingProfile(true)}
-                disabled={!isAuthenticated}
+                onClick={() => isAuthenticated ? setIsEditingProfile(true) : setShowAuthModal(true)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -503,7 +521,6 @@ export default function AccountPortal() {
 
           <button
             onClick={openNewFarmModal}
-            disabled={!canManageAccounts}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -562,8 +579,7 @@ export default function AccountPortal() {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <button
-                    onClick={(e) => canManageAccounts && openEditFarmModal(farm, e)}
-                    disabled={!canManageAccounts}
+                    onClick={(e) => openEditFarmModal(farm, e)}
                     style={{
                       background: '#f8fafc',
                       border: '1px solid #e2e8f0',
@@ -581,8 +597,7 @@ export default function AccountPortal() {
                     <Edit2 size={13} /> Edit
                   </button>
                   <button
-                    onClick={(e) => canManageAccounts && handleDeleteFarm(farm.id, farm.name, e)}
-                    disabled={!canManageAccounts}
+                    onClick={(e) => handleDeleteFarm(farm.id, farm.name, e)}
                     style={{
                       background: '#fef2f2',
                       border: '1px solid #fecaca',
@@ -609,8 +624,8 @@ export default function AccountPortal() {
           <h3 style={{ margin: '0 0 .35rem', fontSize: '.95rem', color: '#0f172a' }}>Connect another greenhouse</h3>
           <p style={{ margin: '0 0 .75rem', fontSize: '.78rem', color: '#64748b' }}>Enter its connection code. The greenhouse owner must approve before its details appear in your account.</p>
           <form onSubmit={requestFarmConnection} style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
-            <input aria-label="Greenhouse connection code" value={connectionCode} onChange={event => setConnectionCode(event.target.value.toUpperCase())} placeholder="GH-XXXXXXXXXX" maxLength={32} disabled={!isAuthenticated || isSubmittingConnection} style={{ flex: '1 1 220px', padding: '.6rem .7rem', border: '1px solid #cbd5e1', borderRadius: 8 }} />
-            <button type="submit" disabled={!isAuthenticated || isSubmittingConnection || !connectionCode.trim()} style={{ padding: '.6rem .9rem', background: '#15803d', color: '#fff', border: 0, borderRadius: 8, fontWeight: 700, cursor: 'pointer', opacity: !isAuthenticated ? .55 : 1 }}>{isSubmittingConnection ? 'Sending…' : 'Request access'}</button>
+            <input aria-label="Greenhouse connection code" value={connectionCode} onChange={event => setConnectionCode(event.target.value.toUpperCase())} placeholder="GH-XXXXXXXXXX" maxLength={32} disabled={isSubmittingConnection} style={{ flex: '1 1 220px', padding: '.6rem .7rem', border: '1px solid #cbd5e1', borderRadius: 8 }} />
+            <button type="submit" disabled={isSubmittingConnection || !connectionCode.trim()} style={{ padding: '.6rem .9rem', background: '#15803d', color: '#fff', border: 0, borderRadius: 8, fontWeight: 700, cursor: 'pointer', opacity: !isAuthenticated ? .55 : 1 }}>{isSubmittingConnection ? 'Sending…' : 'Request access'}</button>
           </form>
           {!isAuthenticated && <div style={{ marginTop: '.45rem', color: '#92400e', fontSize: '.75rem' }}>Sign in to request a greenhouse connection.</div>}
           {connectionRequests.length > 0 && <div style={{ marginTop: '.75rem' }}><strong style={{ fontSize: '.8rem' }}>Your connection requests</strong>{connectionRequests.map(request => <div key={request.id} style={{ fontSize: '.78rem', color: '#475569', paddingTop: '.35rem' }}>{request.farm_name} · {request.status.toLowerCase()}</div>)}</div>}
@@ -642,7 +657,6 @@ export default function AccountPortal() {
 
           <button
             onClick={openNewUserModal}
-            disabled={!canManageAccounts}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -686,16 +700,14 @@ export default function AccountPortal() {
                   </div>
                   <div style={{ display: 'flex', gap: '0.35rem' }}>
                     <button
-                      onClick={() => isAuthenticated && openEditUserModal(member)}
-                      disabled={!canManageAccounts}
+                      onClick={() => openEditUserModal(member)}
                       style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '0.25rem 0.45rem', cursor: 'pointer' }}
                     >
                       <Edit2 size={12} color="#475569" />
                     </button>
                     {member.id !== user.id && (
                       <button
-                        onClick={() => isAuthenticated && handleDeleteUser(member.id, member.name)}
-                        disabled={!canManageAccounts}
+                        onClick={() => handleDeleteUser(member.id, member.name)}
                         style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', padding: '0.25rem 0.45rem', cursor: 'pointer' }}
                       >
                         <Trash2 size={12} color="#dc2626" />
