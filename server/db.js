@@ -78,6 +78,7 @@ sqlite.exec(`
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
     role TEXT DEFAULT 'Farm Manager',
     phone TEXT,
     avatar TEXT,
@@ -98,6 +99,13 @@ sqlite.exec(`
     updated_at INTEGER NOT NULL
   );
 `);
+
+// Migration: ensure password_hash column exists on existing databases
+try {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT;`);
+} catch (e) {
+  // column already exists
+}
 
 // ─── 2. Seed Default Data if empty ──────────────────────────────────────────
 const farmCount = sqlite.prepare('SELECT count(*) as cnt FROM farms').get().cnt;
@@ -369,6 +377,31 @@ export const db = {
 
   getUserById(id) {
     return sqlite.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  },
+
+  getUserByEmail(email) {
+    if (!email) return null;
+    return sqlite.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email.trim());
+  },
+
+  createUserWithAuth(user) {
+    const id = user.id || `user-${Date.now()}`;
+    const now = Date.now();
+    sqlite.prepare(`
+      INSERT INTO users (id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      user.name || 'Farmer',
+      user.email ? user.email.trim().toLowerCase() : `${id}@irrigatech.io`,
+      user.password_hash || null,
+      user.role || 'Farm Manager',
+      user.phone || '+254 700 000 000',
+      user.avatar || '👨‍🌾',
+      now,
+      now
+    );
+    return this.getUserById(id);
   },
 
   createUser(user) {

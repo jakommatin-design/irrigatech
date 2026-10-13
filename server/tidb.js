@@ -149,6 +149,7 @@ export async function initTiDB() {
         id VARCHAR(64) PRIMARY KEY,
         name VARCHAR(128) NOT NULL,
         email VARCHAR(128) NOT NULL,
+        password_hash VARCHAR(255) NULL,
         role VARCHAR(64) DEFAULT 'Farm Manager',
         phone VARCHAR(32),
         avatar VARCHAR(255),
@@ -156,6 +157,13 @@ export async function initTiDB() {
         updated_at BIGINT NOT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Ensure password_hash column exists on existing TiDB tables
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL`);
+    } catch (e) {
+      // Column already exists or table freshly created
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -444,6 +452,43 @@ export const tidb = {
       return rows[0] || null;
     } catch (err) {
       handleQueryError(err, 'getUserById');
+      return null;
+    }
+  },
+
+  async getUserByEmail(email) {
+    if (!pool || !isConnected || !email) return null;
+    try {
+      const [rows] = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [email.trim()]);
+      return rows[0] || null;
+    } catch (err) {
+      handleQueryError(err, 'getUserByEmail');
+      return null;
+    }
+  },
+
+  async createUserWithAuth(user) {
+    if (!pool || !isConnected) return null;
+    const id = user.id || `user-${Date.now()}`;
+    const now = Date.now();
+    try {
+      await pool.query(`
+        INSERT INTO users (id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        id,
+        user.name || 'Farmer',
+        user.email ? user.email.trim().toLowerCase() : `${id}@irrigatech.io`,
+        user.password_hash || null,
+        user.role || 'Farm Manager',
+        user.phone || '+254 700 000 000',
+        user.avatar || '👨‍🌾',
+        now,
+        now
+      ]);
+      return this.getUserById(id);
+    } catch (err) {
+      handleQueryError(err, 'createUserWithAuth');
       return null;
     }
   },

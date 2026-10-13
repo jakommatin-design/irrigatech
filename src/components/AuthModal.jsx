@@ -3,19 +3,59 @@ import { useAuth } from '../context/AuthContext';
 import { Leaf, Eye, EyeOff, User, Lock, Mail, X } from 'lucide-react';
 
 export default function AuthModal({ onClose }) {
-  const { login, setShowAuthModal } = useAuth();
+  const { login, register, setShowAuthModal } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [emailOrPhone, setEmailOrPhone] = useState('francis@irriga-tech.farm');
-  const [password, setPassword] = useState('••••••••••••');
-  const [name, setName] = useState('Francis J.');
-  const [farmName, setFarmName] = useState('Greenhouse Alpha (3m x 4m)');
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  const [emailOrPhone, setEmailOrPhone] = useState('john@irrigatech.io');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [farmName, setFarmName] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    login(emailOrPhone, password);
-    if (onClose) onClose();
+    setErrorMessage('');
+    setLoading(true);
+
+    try {
+      if (isRegister) {
+        if (!name.trim()) {
+          setErrorMessage('Please enter your full name');
+          setLoading(false);
+          return;
+        }
+        if (password.length < 6) {
+          setErrorMessage('Password must be at least 6 characters long');
+          setLoading(false);
+          return;
+        }
+        const res = await register({
+          name: name.trim(),
+          email: emailOrPhone.trim(),
+          password,
+          farmName: farmName.trim() || 'My Greenhouse Alpha'
+        });
+        if (!res.success) {
+          setErrorMessage(res.error || 'Registration failed');
+        } else {
+          if (onClose) onClose();
+        }
+      } else {
+        const res = await login(emailOrPhone.trim(), password);
+        if (!res.success) {
+          setErrorMessage(res.error || 'Invalid email or password');
+        } else {
+          if (onClose) onClose();
+        }
+      }
+    } catch (err) {
+      setErrorMessage('Network connection error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -64,7 +104,7 @@ export default function AuthModal({ onClose }) {
           </button>
         )}
 
-        {/* Brand Header matching Image 2 */}
+        {/* Brand Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.75rem' }}>
           <div style={{
             width: '36px',
@@ -83,49 +123,94 @@ export default function AuthModal({ onClose }) {
           </span>
         </div>
 
-        {/* Title and Subtitle matching Image 2 */}
-        <div style={{ marginBottom: '1.5rem' }}>
+        {/* Title and Subtitle */}
+        <div style={{ marginBottom: '1.25rem' }}>
           <h2 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.02em', margin: '0 0 0.35rem' }}>
             {isRegister ? 'Create Farm Account' : 'Welcome Back'}
           </h2>
           <p style={{ fontSize: '0.85rem', color: '#64748b', margin: 0 }}>
-            {isRegister ? 'Register your greenhouse to start automated irrigation' : 'Sign in to your account to continue'}
+            {isRegister ? 'Register your greenhouse to start automated irrigation' : 'Sign in to access your greenhouse monitoring dashboard'}
           </p>
         </div>
 
-        {/* Form matching Image 2 */}
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {/* Error Message Alert */}
+        {errorMessage && (
+          <div style={{
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '12px',
+            padding: '0.65rem 0.9rem',
+            fontSize: '0.82rem',
+            color: '#dc2626',
+            fontWeight: 600,
+            marginBottom: '1rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}>
+            <span>⚠️</span>
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
           
           {isRegister && (
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
-                Full Name
-              </label>
-              <div style={{
-                position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                border: '1px solid #cbd5e1',
-                borderRadius: '12px',
-                padding: '0.65rem 0.85rem'
-              }}>
-                <User size={18} color="#94a3b8" style={{ marginRight: '0.6rem' }} />
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your name"
-                  style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.85rem', color: '#0f172a' }}
-                />
+            <>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
+                  Full Name
+                </label>
+                <div style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '12px',
+                  padding: '0.65rem 0.85rem'
+                }}>
+                  <User size={18} color="#94a3b8" style={{ marginRight: '0.6rem' }} />
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. John Kamau"
+                    style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.85rem', color: '#0f172a' }}
+                  />
+                </div>
               </div>
-            </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
+                  Greenhouse / Facility Name
+                </label>
+                <div style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '12px',
+                  padding: '0.65rem 0.85rem'
+                }}>
+                  <Leaf size={18} color="#94a3b8" style={{ marginRight: '0.6rem' }} />
+                  <input
+                    type="text"
+                    value={farmName}
+                    onChange={(e) => setFarmName(e.target.value)}
+                    placeholder="e.g. Greenhouse Alpha (Nanyuki)"
+                    style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.85rem', color: '#0f172a' }}
+                  />
+                </div>
+              </div>
+            </>
           )}
 
           {/* Email or Phone */}
           <div>
             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
-              Email or Phone Number
+              Email Address
             </label>
             <div style={{
               position: 'relative',
@@ -136,13 +221,13 @@ export default function AuthModal({ onClose }) {
               padding: '0.65rem 0.85rem',
               background: '#ffffff'
             }}>
-              <User size={18} color="#94a3b8" style={{ marginRight: '0.6rem' }} />
+              <Mail size={18} color="#94a3b8" style={{ marginRight: '0.6rem' }} />
               <input
-                type="text"
+                type="email"
                 required
                 value={emailOrPhone}
                 onChange={(e) => setEmailOrPhone(e.target.value)}
-                placeholder="Enter your email or phone"
+                placeholder="farmer@irrigatech.io"
                 style={{ border: 'none', outline: 'none', width: '100%', fontSize: '0.85rem', color: '#0f172a' }}
               />
             </div>
@@ -200,22 +285,40 @@ export default function AuthModal({ onClose }) {
             </div>
           )}
 
-          {/* Submit Button matching Image 2 */}
+          {/* Submit Button */}
           <button
             type="submit"
+            disabled={loading}
             style={{
-              background: '#047857',
+              background: loading ? '#059669cc' : '#047857',
               color: '#ffffff',
               padding: '0.85rem',
               borderRadius: '9999px',
               fontSize: '0.95rem',
               fontWeight: 800,
               boxShadow: '0 6px 16px rgba(4, 120, 87, 0.3)',
-              cursor: 'pointer',
-              marginTop: '0.5rem'
+              cursor: loading ? 'not-allowed' : 'pointer',
+              marginTop: '0.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              border: 'none',
+              transition: 'all 0.2s'
             }}
           >
-            {isRegister ? 'Register Account' : 'Login'}
+            {loading && (
+              <span style={{
+                width: '16px',
+                height: '16px',
+                border: '2px solid rgba(255,255,255,0.3)',
+                borderTopColor: '#ffffff',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+                display: 'inline-block'
+              }} />
+            )}
+            {loading ? (isRegister ? 'Creating Account...' : 'Signing In...') : (isRegister ? 'Register Farm Account' : 'Sign In')}
           </button>
         </form>
 
@@ -232,10 +335,10 @@ export default function AuthModal({ onClose }) {
           <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
         </div>
 
-        {/* Continue with Google button matching Image 2 */}
+        {/* Continue with Google button */}
         <button
           onClick={() => {
-            login('google.user@irriga-tech.farm', 'oauth');
+            login('demo.farmer@irrigatech.io', 'demo1234');
             if (onClose) onClose();
           }}
           style={{
@@ -265,13 +368,17 @@ export default function AuthModal({ onClose }) {
           Continue with Google
         </button>
 
-        {/* Footer Toggle matching Image 2 */}
+        {/* Footer Toggle */}
         <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.8rem', color: '#64748b' }}>
           {isRegister ? (
             <>
               Already have an account?{' '}
               <button
-                onClick={() => setIsRegister(false)}
+                type="button"
+                onClick={() => {
+                  setIsRegister(false);
+                  setErrorMessage('');
+                }}
                 style={{ color: '#047857', fontWeight: 800, background: 'none', border: 'none', cursor: 'pointer' }}
               >
                 Sign In
@@ -281,7 +388,13 @@ export default function AuthModal({ onClose }) {
             <>
               Don't have an account?{' '}
               <button
-                onClick={() => setIsRegister(true)}
+                type="button"
+                onClick={() => {
+                  setIsRegister(true);
+                  setErrorMessage('');
+                  setPassword('');
+                  if (emailOrPhone === 'john@irrigatech.io') setEmailOrPhone('');
+                }}
                 style={{ color: '#047857', fontWeight: 800, background: 'none', border: 'none', cursor: 'pointer' }}
               >
                 Register

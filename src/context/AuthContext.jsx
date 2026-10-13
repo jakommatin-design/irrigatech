@@ -97,7 +97,24 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     refreshData();
-  }, [refreshData]);
+    // Verify stored JWT session if available
+    const token = localStorage.getItem('irrigatech_token');
+    if (token) {
+      const base = getApiUrl();
+      fetch(`${base}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.user) {
+            setUser(prev => ({ ...prev, ...data.user }));
+            setIsAuthenticated(true);
+            localStorage.setItem('irrigatech_auth', 'true');
+          }
+        })
+        .catch(() => {});
+    }
+  }, [refreshData, getApiUrl]);
 
   // ─── Farm CRUD Operations ────────────────────────────────────────────────
   const addFarm = async (farmData) => {
@@ -247,15 +264,85 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const login = (email, password) => {
-    setIsAuthenticated(true);
-    localStorage.setItem('irrigatech_auth', 'true');
-    setShowAuthModal(false);
+  const login = async (email, password) => {
+    const base = getApiUrl();
+    try {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Authentication failed' };
+      }
+
+      if (data.token) {
+        localStorage.setItem('irrigatech_token', data.token);
+      }
+      if (data.user) {
+        const mergedUser = { ...defaultUser, ...data.user };
+        setUser(mergedUser);
+        localStorage.setItem('irrigatech_user', JSON.stringify(mergedUser));
+      }
+      setIsAuthenticated(true);
+      localStorage.setItem('irrigatech_auth', 'true');
+      setShowAuthModal(false);
+      refreshData();
+      return { success: true, user: data.user };
+    } catch (err) {
+      console.warn('Network login error, falling back locally:', err);
+      // Fallback if backend server unreachable in development
+      setIsAuthenticated(true);
+      localStorage.setItem('irrigatech_auth', 'true');
+      setShowAuthModal(false);
+      return { success: true };
+    }
+  };
+
+  const register = async ({ name, email, password, farmName, phone }) => {
+    const base = getApiUrl();
+    try {
+      const res = await fetch(`${base}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, farmName, phone })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Account registration failed' };
+      }
+
+      if (data.token) {
+        localStorage.setItem('irrigatech_token', data.token);
+      }
+      if (data.user) {
+        const mergedUser = {
+          ...defaultUser,
+          ...data.user,
+          activeFarm: data.farm ? data.farm.name : defaultUser.activeFarm
+        };
+        setUser(mergedUser);
+        localStorage.setItem('irrigatech_user', JSON.stringify(mergedUser));
+      }
+      if (data.farm) {
+        setFarms(prev => [data.farm, ...prev]);
+      }
+      setIsAuthenticated(true);
+      localStorage.setItem('irrigatech_auth', 'true');
+      setShowAuthModal(false);
+      refreshData();
+      return { success: true, user: data.user };
+    } catch (err) {
+      console.error('Registration network error:', err);
+      return { success: false, error: 'Cannot connect to backend server. Please verify backend is running.' };
+    }
   };
 
   const logout = () => {
-    setIsAuthenticated(false);
+    localStorage.removeItem('irrigatech_token');
     localStorage.setItem('irrigatech_auth', 'false');
+    setIsAuthenticated(false);
     setShowSplash(true);
   };
 
@@ -292,6 +379,7 @@ export function AuthProvider({ children }) {
       updateSettings,
       isAuthenticated,
       login,
+      register,
       logout,
       switchFarm,
       switchCrop,
