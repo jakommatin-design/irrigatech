@@ -8,7 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { SerialBridge } from './serial-bridge.js';
 import { db } from './db.js';
 import { initTiDB, tidb } from './tidb.js';
@@ -109,6 +109,82 @@ if (distDir) {
 const bridge = new SerialBridge();
 const ussd = new UssdService(bridge, db, tidb, aiAgronomy);
 
+// Hosted ESP32 devices authenticate with a server-only shared token. Never expose it to the browser.
+const deviceToken = process.env.DEVICE_API_TOKEN || '';
+const deviceOwnerId = process.env.DEVICE_OWNER_ID || '';
+let lastCloudDeviceTelemetryAt = 0;
+let pendingDeviceCommands = [];
+function authenticateDevice(req, res, next) {
+  const provided = req.get('x-device-token') || '';
+  const expectedBytes = Buffer.from(deviceToken);
+  const providedBytes = Buffer.from(provided);
+  if (!deviceToken || expectedBytes.length !== providedBytes.length || !timingSafeEqual(expectedBytes, providedBytes)) {
+    return res.status(401).json({ error: 'Invalid device credentials' });
+  }
+  if (!deviceOwnerId) return res.status(503).json({ error: 'DEVICE_OWNER_ID is not configured on the server' });
+  return next();
+}
+
+const telemetryRanges = {
+  temperature: [-40, 100], humidity: [0, 100], soilMoisture: [0, 100], soilPh: [0, 14],
+  lightLux: [0, 200000], batterySoc: [0, 100], batteryVoltage: [0, 100], solarWatts: [0, 100000],
+  waterTank: [0, 100], flowRate: [0, 10000], shadePct: [0, 100], uptime: [0, Number.MAX_SAFE_INTEGER]
+};
+
+function validateDeviceTelemetry(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'JSON telemetry object required';
+  if (body.deviceId !== deviceConfig.deviceId) return 'Unknown deviceId';
+  for (const [key, value] of Object.entries(body)) {
+    if (key in telemetryRanges) {
+      const [min, max] = telemetryRanges[key];
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) return `Invalid ${key}`;
+    }
+  }
+  for (const key of ['pump', 'ac', 'led']) {
+    if (key in body && typeof body[key] !== 'boolean') return `Invalid ${key}`;
+  }
+  if (!('temperature' in body) || !('humidity' in body) || !('soilMoisture' in body)) return 'temperature, humidity and soilMoisture are required';
+  return null;
+}
+
+app.post('/api/device/telemetry', authenticateDevice, async (req, res) => {
+  const error = validateDeviceTelemetry(req.body);
+  if (error) return res.status(400).json({ error });
+  if (bridge.simulated && bridge.simInterval) {
+    clearInterval(bridge.simInterval);
+    bridge.simInterval = null;
+    bridge.simulated = false;
+  }
+  const state = {
+    ...bridge.state,
+    ...req.body,
+    mode: 'live', connected: true, simulated: false,
+    deviceId: deviceConfig.deviceId, receivedAt: Date.now()
+  };
+  Object.assign(bridge.state, state);
+  bridge.connected = true;
+  bridge.simulated = false;
+  bridge.portName = 'cloud-device';
+  lastCloudDeviceTelemetryAt = state.receivedAt;
+  await tidb.logTelemetry(state);
+  db.logTelemetry(state);
+  io.to(`owner:${deviceOwnerId}`).emit('status', { connected: true, mode: 'live', source: 'cloud', deviceId: deviceConfig.deviceId });
+  io.to(`owner:${deviceOwnerId}`).emit('telemetry', state);
+  return res.status(202).json({ accepted: true, deviceId: deviceConfig.deviceId, receivedAt: state.receivedAt });
+});
+
+app.get('/api/device/commands', authenticateDevice, (req, res) => {
+  return res.json({ commands: pendingDeviceCommands.map(({ id, cmd, zoneId, duration, pct }) => ({ id, cmd, zoneId, duration, pct })) });
+});
+
+app.post('/api/device/commands/:id/ack', authenticateDevice, (req, res) => {
+  const index = pendingDeviceCommands.findIndex(command => command.id === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Command not found or already acknowledged' });
+  const [command] = pendingDeviceCommands.splice(index, 1);
+  io.to(`owner:${deviceOwnerId}`).emit('device_command_ack', { id: command.id, cmd: command.cmd, success: req.body?.success !== false });
+  return res.json({ acknowledged: true });
+});
+
 // Issue a per-user Cloudinary upload signature; the API secret stays server-side.
 app.post('/api/cloudinary/profile-signature', authenticateToken, (req, res) => {
   const { CLOUDINARY_CLOUD_NAME: cloudName, CLOUDINARY_API_KEY: apiKey, CLOUDINARY_API_SECRET: apiSecret } = process.env;
@@ -176,9 +252,30 @@ io.on('connection', (socket) => {
       socket.emit('command_error', { error: 'Unsupported command' });
       return;
     }
+    if (data.cmd === 'SET_SHADE' && ((bridge.connected && !bridge.simulated) || (lastCloudDeviceTelemetryAt && Date.now() - lastCloudDeviceTelemetryAt < 45000))) {
+      socket.emit('command_error', { error: 'Shade control is not wired in the current physical device firmware.' });
+      return;
+    }
     console.log('[Socket.io] Received command:', data);
     const { cmd, zoneId = 1, duration = 300 } = data;
-    bridge.sendCommand(cmd);
+    if (bridge.connected && !bridge.simulated && bridge.portName !== 'cloud-device') {
+      bridge.sendCommand(cmd);
+    } else if (deviceToken && lastCloudDeviceTelemetryAt && Date.now() - lastCloudDeviceTelemetryAt < 45000) {
+      if ((socket.data.auth?.ownerId || socket.data.auth?.id) !== deviceOwnerId) {
+        socket.emit('command_error', { error: 'This device is not assigned to your greenhouse account.' });
+        return;
+      }
+      if (pendingDeviceCommands.length >= 20) {
+        socket.emit('command_error', { error: 'Device command queue is full; wait for the device to reconnect.' });
+        return;
+      }
+      pendingDeviceCommands.push({ id: randomBytes(12).toString('hex'), cmd, zoneId, duration, pct: data.pct, queuedAt: Date.now() });
+    } else if (bridge.simulated) {
+      bridge.sendCommand(cmd);
+    } else {
+      socket.emit('command_error', { error: 'No live USB or hosted device is connected. Command was not sent.' });
+      return;
+    }
     
     // Log to both TiDB Cloud and local SQLite
     await tidb.logIrrigation(cmd, 'CLIENT_OVERRIDE', 'USER_ACTION', zoneId, duration);
@@ -207,6 +304,23 @@ bridge.on('status', (status) => {
     tidb: tidb.getStatus()
   });
 });
+
+setInterval(() => {
+  if (lastCloudDeviceTelemetryAt && Date.now() - lastCloudDeviceTelemetryAt > 45000) {
+    const cloudWasTheActiveSource = bridge.portName === 'cloud-device' || bridge.simulated;
+    lastCloudDeviceTelemetryAt = 0;
+    pendingDeviceCommands = [];
+    if (cloudWasTheActiveSource) {
+      bridge.connected = false;
+      bridge.simulated = false;
+      bridge.portName = null;
+      bridge.state.connected = false;
+      bridge.state.simulated = false;
+      bridge.state.mode = 'offline';
+      io.to(`owner:${deviceOwnerId}`).emit('status', { connected: false, mode: 'offline', source: 'cloud', deviceId: deviceConfig.deviceId });
+    }
+  }
+}, 15000).unref();
 
 // Post-Irrigation Automated Notification & AI Agronomy Advisory Pipeline
 bridge.on('irrigation_cycle_finished', async (data) => {
@@ -274,6 +388,13 @@ app.get(['/health', '/api/health'], (req, res) => {
     tidb: tidb.getStatus(),
     sqlite: true,
     frontend: distDir ? 'unified-react-dashboard' : 'api-only',
+    device: {
+      id: deviceConfig.deviceId,
+      cloudIngestionConfigured: Boolean(deviceToken && deviceOwnerId),
+      cloudConnected: Boolean(lastCloudDeviceTelemetryAt && Date.now() - lastCloudDeviceTelemetryAt < 45000),
+      lastCloudTelemetryAt: lastCloudDeviceTelemetryAt || null,
+      queuedCommands: pendingDeviceCommands.length
+    },
     timestamp: Date.now() 
   });
 });

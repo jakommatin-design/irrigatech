@@ -19,15 +19,22 @@
 
 ## 🛠️ System Architecture
 
+The system supports two hardware paths at once. USB serial sends readings to a Node.js backend running on the greenhouse computer. Wi-Fi sends authenticated HTTPS telemetry to the hosted Node.js backend. When both links are configured, the same ESP32 can publish to both. The dashboard uses the backend's authenticated Socket.IO channel; the backend stores readings in TiDB Cloud when available and keeps the local SQLite fallback.
+
 ```mermaid
-graph LR
-    Sensors[Sensors: Soil, DHT, Lux, Batt] --> MCU[Arduino / ESP32 Controller]
-    Actuators[Relays: Pump, Fan, Shade] <--> MCU
-    MCU <-->|USB Serial 9600 Baud| Gateway[Node.js Gateway / Server]
-    Gateway <-->|TLS 4000| TiDB[(TiDB Cloud)]
-    Gateway <-->|Local WAL| SQLite[(SQLite irrigatech.db)]
-    Gateway <-->|WebSocket + REST| WebApp[React Dashboard]
+flowchart LR
+    Sensors[Greenhouse sensors] --> ESP[ESP32 controller]
+    ESP <--> Relays[Pump and fan relays]
+    ESP <-->|USB serial 9600 baud| Local[Local Node.js backend]
+    ESP -->|Wi-Fi HTTPS and device token| Cloud[Railway Node.js backend]
+    Local --> SQLite[(Local SQLite)]
+    Cloud --> TiDB[(TiDB Cloud)]
+    Local <-->|Authenticated Socket.IO| Dashboard[React dashboard]
+    Cloud <-->|Authenticated Socket.IO| Dashboard
+    Dashboard -->|Queued cloud control commands| ESP
 ```
+
+For exact wiring, deployment variables, firmware setup and operating steps, see [`docs/Hybrid_Hardware_Implementation_Guide.md`](docs/Hybrid_Hardware_Implementation_Guide.md) and the downloadable guide created with this change.
 
 ---
 
@@ -62,7 +69,9 @@ npm install
 npm --prefix server install
 npm run dev:all
 ```
-Open [http://localhost:5173](http://localhost:5173). The backend listens on `http://localhost:3000`. To force a specific USB port, set `SERIAL_PORT=COM3` (replace `COM3` with the port shown in Windows Device Manager) and `SERIAL_BAUD_RATE=9600` in `server/.env.local`. The firmware must use the same baud rate. Leave `SERIAL_PORT` blank to auto-detect supported Arduino/ESP32 USB adapters. `npm --prefix server run list-serial-ports` lists ports the backend can see. Close Arduino Serial Monitor before starting the backend because only one program can use a serial port at a time.
+Open [http://localhost:5173](http://localhost:5173). The backend listens on `http://localhost:3000`. To force a specific USB port, set `SERIAL_PORT=COMx` (replace with the board's port from Device Manager) and `SERIAL_BAUD_RATE=9600` in `server/.env.local`. Leave `SERIAL_PORT` blank to auto-detect supported USB adapters. `npm --prefix server run list-serial-ports` lists ports. Close Arduino Serial Monitor before starting the backend. USB telemetry works only while this backend is running on the computer physically connected to the controller.
+
+For hosted ESP32 telemetry, configure the server-only `DEVICE_API_TOKEN` and `DEVICE_OWNER_ID` described in the hybrid guide, then create `firmware/secrets.h` from `firmware/secrets.example.h`. The ESP32 requires a 2.4 GHz Wi-Fi connection and the valid root CA for the HTTPS service. Never place these secrets in Vite variables or commit them. Without the device token and Wi-Fi configuration, the hosted integration remains disabled; local USB mode continues to work.
 
 ---
 

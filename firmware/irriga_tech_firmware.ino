@@ -4,15 +4,12 @@
  *  Firmware Version: V2.4 (Production Grade)
  * ===============================================================================
  *  Features:
- *   - DHT11 Temperature & Humidity Sensor (Pin D2) with isnan() guard
- *   - FC-28 Analog Soil Moisture Sensor (Pin A0) with calibrated dryness logic
- *   - 4-Channel Relay Module:
- *       • Pin D3: Submersible Water Pump
- *       • Pin D7: Climate AC / Extraction Fan
- *       • Pin D8: Alert Buzzer / Visual Status LED
+ *   - DHT11 Temperature & Humidity Sensor (GPIO 4 on ESP32, D2 on classic Arduino)
+ *   - Soil moisture and pH analog inputs (GPIO 34/35 on ESP32, A0/A1 on Arduino)
+ *   - Relay outputs (GPIO 25/26/27 on ESP32; D3/D7/D8 on Arduino)
  *   - I2C 16x2 Character LCD (0x27)
- *   - JSON Serial Communication Protocol (9600 Baud)
- *   - Bidirectional Command Listener for Web Dashboard Control
+ *   - JSON Serial Communication Protocol (9600 Baud) for local USB mode
+ *   - Optional Wi-Fi telemetry and command polling over certificate-verified HTTPS on ESP32
  *   - Non-blocking millis() loop for instant command response
  * ===============================================================================
  */
@@ -20,15 +17,44 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <DHT.h>
+#include <ArduinoJson.h>
+
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <WiFiClientSecure.h>
+  #include <HTTPClient.h>
+  #if __has_include("secrets.h")
+    #include "secrets.h" // Copy secrets.example.h to secrets.h and fill it locally; never commit it.
+    #define IRRIGA_HAS_CLOUD_CONFIG 1
+  #else
+    #define IRRIGA_HAS_CLOUD_CONFIG 0
+  #endif
+  #define IRRIGA_DHT_PIN 4
+  #define IRRIGA_SOIL_PIN 34
+  #define IRRIGA_PH_PIN 35
+  #define IRRIGA_RELAY_PIN 25
+  #define IRRIGA_AC_PIN 26
+  #define IRRIGA_LED_PIN 27
+  #define IRRIGA_ADC_MAX 4095.0
+#else
+  #define IRRIGA_DHT_PIN 2
+  #define IRRIGA_SOIL_PIN A0
+  #define IRRIGA_PH_PIN A1
+  #define IRRIGA_RELAY_PIN 3
+  #define IRRIGA_AC_PIN 7
+  #define IRRIGA_LED_PIN 8
+  #define IRRIGA_ADC_MAX 1023.0
+  #define IRRIGA_HAS_CLOUD_CONFIG 0
+#endif
 
 // Pin definitions
-#define DHTPIN 2              // Digital pin for DHT11 sensor
+#define DHTPIN IRRIGA_DHT_PIN // ESP32 uses GPIO4; classic Arduino uses D2
 #define DHTTYPE DHT11         // DHT 11
-#define SOIL_MOISTURE_PIN A0  // Analog pin for FC-28 soil moisture sensor
-#define PH_SENSOR_PIN A1      // Analog pin for Soil pH Sensor probe (PH-4502C / E-201-C)
-#define RELAY_PIN 3           // Relay for Water Pump
-#define AC_PIN 7              // Relay for AC / Ventilation Fan
-#define LED_PIN 8             // Buzzer & Status LED
+#define SOIL_MOISTURE_PIN IRRIGA_SOIL_PIN
+#define PH_SENSOR_PIN IRRIGA_PH_PIN
+#define RELAY_PIN IRRIGA_RELAY_PIN
+#define AC_PIN IRRIGA_AC_PIN
+#define LED_PIN IRRIGA_LED_PIN
 
 // LCD and DHT objects
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -47,6 +73,9 @@ bool manualOverride = false;
 
 unsigned long lastSensorReadTime = 0;
 const unsigned long SENSOR_INTERVAL = 2000; // 2 seconds
+unsigned long lastCloudPostTime = 0;
+unsigned long lastCloudCommandPollTime = 0;
+unsigned long lastWiFiAttemptTime = 0;
 
 // Non-blocking pump safety cutoff (Max 5 minutes)
 unsigned long pumpStartTime = 0;
@@ -75,6 +104,10 @@ void setup() {
 
   // Initialize DHT
   dht.begin();
+#if defined(ESP32) && IRRIGA_HAS_CLOUD_CONFIG
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(IRRIGA_WIFI_SSID, IRRIGA_WIFI_PASSWORD);
+#endif
   delay(1200);
 
   lcd.clear();
@@ -85,6 +118,7 @@ void setup() {
 void loop() {
   // 1. Process any incoming serial commands from Web Dashboard
   processSerialCommands();
+  serviceCloudConnection();
 
   // 2. Safety guard: auto cutoff if pump runs longer than 5 minutes
   if (pumpState && (millis() - pumpStartTime > MAX_PUMP_DURATION)) {
@@ -118,7 +152,7 @@ void readSensorsAndUpdate() {
   // Read analog soil moisture (0-1023)
   // Higher analog read = dryer soil on resistive probes
   int rawSoil = analogRead(SOIL_MOISTURE_PIN);
-  float soilDryPercentage = (rawSoil / 1023.0) * 100.0;
+  float soilDryPercentage = (rawSoil / IRRIGA_ADC_MAX) * 100.0;
 
   // Automated irrigation decision (if not under manual override)
   if (!manualOverride) {
@@ -166,7 +200,7 @@ void readSensorsAndUpdate() {
 
   // Read analog soil pH probe (A1)
   int rawPh = analogRead(PH_SENSOR_PIN);
-  float soilPh = 3.5 + (rawPh / 1023.0) * 5.5; // Calibration: maps ADC to 3.5–9.0 pH range
+  float soilPh = 3.5 + (rawPh / IRRIGA_ADC_MAX) * 5.5; // Calibrate with your pH probe before field use
 
   // Output structured JSON telemetry for Web/Serial Bridge
   Serial.print("{\"temperature\":");
@@ -184,13 +218,105 @@ void readSensorsAndUpdate() {
   Serial.print(",\"led\":");
   Serial.print(ledState ? "true" : "false");
   Serial.println("}");
+
+#if defined(ESP32) && IRRIGA_HAS_CLOUD_CONFIG
+  if (WiFi.status() == WL_CONNECTED && millis() - lastCloudPostTime >= 10000) {
+    lastCloudPostTime = millis();
+    postCloudTelemetry(temp, hum, soilDryPercentage, soilPh);
+  }
+#endif
 }
+
+void serviceCloudConnection() {
+#if defined(ESP32) && IRRIGA_HAS_CLOUD_CONFIG
+  if (WiFi.status() != WL_CONNECTED && millis() - lastWiFiAttemptTime >= 15000) {
+    lastWiFiAttemptTime = millis();
+    WiFi.disconnect();
+    WiFi.begin(IRRIGA_WIFI_SSID, IRRIGA_WIFI_PASSWORD);
+  }
+  if (WiFi.status() == WL_CONNECTED && millis() - lastCloudCommandPollTime >= 5000) {
+    lastCloudCommandPollTime = millis();
+    pollCloudCommands();
+  }
+#endif
+}
+
+#if defined(ESP32) && IRRIGA_HAS_CLOUD_CONFIG
+WiFiClientSecure createVerifiedTlsClient() {
+  WiFiClientSecure client;
+  client.setCACert(IRRIGA_ROOT_CA_PEM); // CA verification stays enabled; do not replace with setInsecure().
+  return client;
+}
+
+void postCloudTelemetry(float temp, float hum, float soil, float ph) {
+  WiFiClientSecure client = createVerifiedTlsClient();
+  HTTPClient http;
+  String url = String(IRRIGA_API_BASE_URL) + "/api/device/telemetry";
+  http.setTimeout(2000);
+  if (!http.begin(client, url)) return;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Token", IRRIGA_DEVICE_TOKEN);
+  StaticJsonDocument<384> doc;
+  doc["deviceId"] = IRRIGA_DEVICE_ID;
+  doc["temperature"] = temp;
+  doc["humidity"] = hum;
+  doc["soilMoisture"] = soil;
+  doc["soilPh"] = ph;
+  doc["pump"] = pumpState;
+  doc["ac"] = acState;
+  doc["led"] = ledState;
+  doc["uptime"] = millis() / 1000;
+  String body;
+  serializeJson(doc, body);
+  int status = http.POST(body);
+  if (status < 200 || status >= 300) Serial.printf("Cloud telemetry HTTP %d\n", status);
+  http.end();
+}
+
+void pollCloudCommands() {
+  WiFiClientSecure client = createVerifiedTlsClient();
+  HTTPClient http;
+  String url = String(IRRIGA_API_BASE_URL) + "/api/device/commands";
+  http.setTimeout(2000);
+  if (!http.begin(client, url)) return;
+  http.addHeader("X-Device-Token", IRRIGA_DEVICE_TOKEN);
+  int status = http.GET();
+  if (status == 200) {
+    StaticJsonDocument<1024> doc;
+    if (deserializeJson(doc, http.getString()) == DeserializationError::Ok) {
+      for (JsonObject command : doc["commands"].as<JsonArray>()) {
+        String id = command["id"] | "";
+        String name = command["cmd"] | "";
+        executeCommand(name);
+        http.end();
+        WiFiClientSecure ackClient = createVerifiedTlsClient();
+        HTTPClient ack;
+        String ackUrl = String(IRRIGA_API_BASE_URL) + "/api/device/commands/" + id + "/ack";
+        ack.setTimeout(2000);
+        if (ack.begin(ackClient, ackUrl)) {
+          ack.addHeader("X-Device-Token", IRRIGA_DEVICE_TOKEN);
+          ack.addHeader("Content-Type", "application/json");
+          ack.POST("{\"success\":true}");
+          ack.end();
+        }
+        return;
+      }
+    }
+  }
+  http.end();
+}
+#endif
 
 void processSerialCommands() {
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
 
+    executeCommand(command);
+  }
+}
+
+void executeCommand(String command) {
     if (command == "PUMP_ON") {
       manualOverride = true;
       pumpState = true;
@@ -223,5 +349,4 @@ void processSerialCommands() {
       digitalWrite(LED_PIN, LOW);
       Serial.println("{\"ack\":\"LED_OFF_EXECUTED\"}");
     }
-  }
 }
