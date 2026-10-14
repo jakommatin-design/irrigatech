@@ -174,14 +174,16 @@ if (farmCount === 0) {
 
 const userCount = sqlite.prepare('SELECT count(*) as cnt FROM users').get().cnt;
 if (userCount === 0) {
+  // Pre-computed bcrypt hash of 'Farmer@2026' (cost factor 10)
+  const SEED_HASH = '$2b$10$NfTi7R5Z3kU0aS.vV4E8P.zMk5GUUb5ZThvipS4tGJnOlxGSTUMXC';
   const insertUser = sqlite.prepare(`
-    INSERT INTO users (id, owner_id, name, email, role, phone, avatar, created_at, updated_at)
-    VALUES (?, 'user-01', ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, owner_id, name, email, password_hash, role, phone, avatar, created_at, updated_at)
+    VALUES (?, 'user-01', ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const now = Date.now();
-  insertUser.run('user-01', 'Farmer John', 'john@irrigatech.io', 'Chief Agronomist & Admin', '+254 712 345 678', '👨‍🌾', now, now);
-  insertUser.run('user-02', 'Sarah Muthoni', 'sarah@irrigatech.io', 'Irrigation Engineer', '+254 722 987 654', '👩‍🔬', now, now);
-  insertUser.run('user-03', 'David Kibet', 'david@irrigatech.io', 'Greenhouse Technician', '+254 733 112 233', '👷', now, now);
+  insertUser.run('user-01', 'Farmer John',    'john@irrigatech.io',  SEED_HASH, 'Chief Agronomist & Admin',  '+254 712 345 678', '👨‍🌾', now, now);
+  insertUser.run('user-02', 'Sarah Muthoni',  'sarah@irrigatech.io', SEED_HASH, 'Irrigation Engineer',        '+254 722 987 654', '👩‍🔬', now, now);
+  insertUser.run('user-03', 'David Kibet',    'david@irrigatech.io', SEED_HASH, 'Greenhouse Technician',      '+254 733 112 233', '👷',   now, now);
 }
 
 const settingsCount = sqlite.prepare('SELECT count(*) as cnt FROM settings').get().cnt;
