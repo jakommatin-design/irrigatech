@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, CheckCircle2, Droplets, LoaderCircle, Sparkles, Sprout, Sun } from 'lucide-react';
 import { useSensors } from '../context/SensorContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isDemoAccount } from '../context/AuthContext';
 
 const cardStyle = {
   background: '#fff', border: '1px solid #e2e8f0', borderRadius: 18,
@@ -12,7 +12,9 @@ export default function AiAdviceView() {
   const sensors = useSensors();
   const { authHeaders, isAuthenticated } = useAuth();
   const { temperature, humidity, soilMoisture, connected, mode } = sensors;
-  const canRequest = isAuthenticated && (connected || mode === 'demo');
+  const { user } = useAuth();
+  const isDemo = isDemoAccount(user);
+  const canRequest = isAuthenticated && (isDemo ? true : (connected && mode === 'live'));
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

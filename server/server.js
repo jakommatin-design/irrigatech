@@ -35,7 +35,7 @@ async function authenticateToken(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     const currentUser = db.getUserById(decoded.id) || await tidb.getUserById(decoded.id);
     if (!currentUser) return res.status(401).json({ error: 'Account is no longer active' });
-    req.auth = { ...decoded, role: currentUser.role, ownerId: currentUser.owner_id || decoded.ownerId || currentUser.id };
+    req.auth = { ...decoded, email: currentUser.email || decoded.email, role: currentUser.role, ownerId: currentUser.owner_id || decoded.ownerId || currentUser.id };
     return next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired authentication token' });
@@ -911,6 +911,24 @@ app.get('/api/ussd/sms-logs', authenticateToken, async (req, res) => {
 // POST /api/ai/advice - Trigger on-demand AI post-irrigation advisory
 app.post('/api/ai/advice', authenticateToken, async (req, res) => {
   try {
+    const userEmail = (req.auth?.email || '').toLowerCase();
+    const isSimAccount = [
+      'john@irrigatech.io',
+      'sarah@irrigatech.io',
+      'david@irrigatech.io',
+      'demo.farmer@irrigatech.io',
+      'francis@irriga-tech.farm'
+    ].includes(userEmail);
+
+    // Real user accounts strictly require real live hardware telemetry
+    if (!isSimAccount) {
+      if (!bridge.connected || bridge.simulated) {
+        return res.status(400).json({
+          error: 'Real accounts require live hardware. Connect physical sensor hardware to generate real-data AI agronomy advice.'
+        });
+      }
+    }
+
     const { 
       crop = deviceConfig.crop, 
       cropStage = 'Vegetative Phase', 
